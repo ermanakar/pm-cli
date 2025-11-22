@@ -1,4 +1,6 @@
 import * as readline from 'readline';
+import * as fs from 'fs';
+import * as path from 'path';
 import chalk from 'chalk';
 import { createDefaultLLMClient, LLMMessage } from './core/llm';
 import { loadProjectContext } from './core/context';
@@ -50,7 +52,7 @@ You have access to a subset of the project's context (wrapped in <project_contex
 - **Structured**: Use Markdown headers, bullet points, and bold text for readability in a terminal.
 
 **7. AVAILABLE COMMANDS**
-- /help, /context, /quit. (Do not hallucinate others).
+- /help, /context, /read <path>, /quit. (Do not hallucinate others).
 
 You will now be provided with project context inside <project_context> tags.
 <project_context>
@@ -74,14 +76,19 @@ You are pmx. Be sharp, strategic, and concise.
 
     rl.on('line', async (line) => {
       const input = line.trim();
+      
       if (input.startsWith('/')) {
-        switch (input) {
+        const [command, ...args] = input.split(' ');
+        
+        switch (command) {
           case '/help':
             console.log(chalk.dim('Available commands:'));
-            console.log(chalk.dim('  /help    - Show this help message'));
-            console.log(chalk.dim('  /context - Show loaded context files'));
-            console.log(chalk.dim('  /quit    - Exit the application'));
+            console.log(chalk.dim('  /help         - Show this help message'));
+            console.log(chalk.dim('  /context      - Show loaded context files'));
+            console.log(chalk.dim('  /read <path>  - Read a file into context'));
+            console.log(chalk.dim('  /quit         - Exit the application'));
             break;
+            
           case '/context':
             console.log(chalk.dim('Loaded Context Files:'));
             if (loadedFiles.length === 0) {
@@ -90,9 +97,44 @@ You are pmx. Be sharp, strategic, and concise.
               loadedFiles.forEach(f => console.log(chalk.dim(`  - ${f}`)));
             }
             break;
+
+          case '/read':
+            if (args.length === 0) {
+              console.log(chalk.yellow('Usage: /read <path>'));
+            } else {
+              const filePath = args[0];
+              const fullPath = path.resolve(process.cwd(), filePath);
+              
+              if (fs.existsSync(fullPath)) {
+                try {
+                  const content = fs.readFileSync(fullPath, 'utf-8');
+                  const fileContext = `\n<file path="${filePath}">\n${content}\n</file>`;
+                  
+                  // Add to messages as a system/user injection
+                  messages.push({ 
+                    role: 'user', 
+                    content: `I am loading the file "${filePath}" into your context:\n${fileContext}` 
+                  });
+                  
+                  // Also add to loadedFiles list for display
+                  if (!loadedFiles.includes(filePath)) {
+                    loadedFiles.push(filePath);
+                  }
+                  
+                  console.log(chalk.green(`✓ Read ${filePath} (${content.length} chars)`));
+                } catch (err) {
+                  console.error(chalk.red(`Error reading file: ${(err as Error).message}`));
+                }
+              } else {
+                console.log(chalk.red(`File not found: ${filePath}`));
+              }
+            }
+            break;
+
           case '/quit':
             rl.close();
             return;
+            
           default:
             console.log(chalk.yellow('Unknown command. Type /help for options.'));
             break;
