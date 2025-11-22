@@ -3,9 +3,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import * as inquirer from 'inquirer';
-import { createDefaultLLMClient, LLMMessage } from './core/llm';
-import { buildProjectContext } from './core/context';
-import { listDocFiles, readDocFile, prepareDocWrite, confirmAndApplyPendingWrite } from './core/fsTools';
+import { createDefaultLLMClient, LLMMessage } from '../core/llm';
+import { buildProjectContext } from '../core/context';
+import { listDocFiles, readDocFile, prepareDocWrite, applyPendingWrite } from '../core/fsTools';
+import { logToolEvent, promptForWriteConfirmation } from './ui';
 
 const TOOLS = [
   {
@@ -175,71 +176,134 @@ You are pmx, a product co-pilot running inside a CLI. You only know about the pr
       messages.push({ role: 'user', content: input });
       const initialMessageCount = messages.length;
 
-      // Spinner animation
-      const spinnerChars = ['|', '/', '-', '\\'];
-      let spinnerIdx = 0;
-      const spinnerInterval = setInterval(() => {
-        process.stdout.write(`\r${chalk.cyan(spinnerChars[spinnerIdx])} Thinking...`);
-        spinnerIdx = (spinnerIdx + 1) % spinnerChars.length;
-      }, 80);
-
-      const clearSpinner = () => {
-        clearInterval(spinnerInterval);
-        process.stdout.write('\r\x1b[K'); // Clear line
-      };
+      // Streaming UI setup
+      let startTime = Date.now();
+      let firstChunkReceived = false;
+      
+      // We'll use a simple "✦" prompt for the AI response
+      process.stdout.write(chalk.magenta('✦ '));
 
       try {
         let keepGoing = true;
         
         while (keepGoing) {
-          const response = await llm.chat(messages, TOOLS);
+          // If the client supports streaming, use it
+          let responseContent = '';
+          let responseToolCalls: any[] | undefined;
+
+          if (llm.chatStream) {
+            const response = await llm.chatStream(messages, TOOLS, (chunk) => {
+              if (!firstChunkReceived) {
+                firstChunkReceived = true;
+                // Calculate time to first token could be logged here if needed
+              }
+              process.stdout.write(chunk);
+            });
+            responseContent = response.content || '';
+            responseToolCalls = response.tool_calls;
+            
+            // Add a newline after streaming finishes
+            console.log(''); 
+            
+            // Show timing
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+            console.log(chalk.dim(`  (${duration}s)`));
+
+          } else {
+            // Fallback for non-streaming clients
+            const response = await llm.chat(messages, TOOLS);
+            responseContent = response.content || '';
+            responseToolCalls = response.tool_calls;
+            console.log(responseContent);
+          }
           
-          if (response.tool_calls && response.tool_calls.length > 0) {
+          if (responseToolCalls && responseToolCalls.length > 0) {
             // Add assistant message with tool calls
             messages.push({
               role: 'assistant',
-              content: response.content,
-              tool_calls: response.tool_calls
+              content: responseContent,
+              tool_calls: responseToolCalls
             });
 
             // Process each tool call
-            for (const toolCall of response.tool_calls) {
+            for (const toolCall of responseToolCalls) {
               const fnName = toolCall.function.name;
               const args = JSON.parse(toolCall.function.arguments);
               let result = '';
 
-              clearSpinner(); // Pause spinner for interaction/logging
-
               if (fnName === 'read_file') {
-                console.log(chalk.dim(`Reading ${args.path}...`));
                 try {
                   const doc = await readDocFile(process.cwd(), args.path);
                   result = doc.content;
+                  logToolEvent({
+                    type: 'readFile',
+                    target: args.path,
+                    status: 'ok',
+                    preview: doc.preview
+                  });
                 } catch (err) {
                   result = `Error reading file: ${(err as Error).message}`;
+                  logToolEvent({
+                    type: 'readFile',
+                    target: args.path,
+                    status: 'error',
+                    message: (err as Error).message
+                  });
                 }
               } else if (fnName === 'list_files') {
-                console.log(chalk.dim(`Listing ${args.path}...`));
                 try {
                   const files = await listDocFiles(process.cwd(), args.path);
                   result = files.join('\n');
+                  logToolEvent({
+                    type: 'readFolder',
+                    target: args.path || 'docs/',
+                    status: 'ok',
+                    message: `Found ${files.length} files.`
+                  });
                 } catch (err) {
                   result = `Error listing directory: ${(err as Error).message}`;
+                  logToolEvent({
+                    type: 'readFolder',
+                    target: args.path || 'docs/',
+                    status: 'error',
+                    message: (err as Error).message
+                  });
                 }
               } else if (fnName === 'write_file') {
                 // Interactive confirmation
                 rl.pause();
                 try {
                   const pending = await prepareDocWrite(process.cwd(), args.path, args.content, args.reason || 'No reason provided');
-                  const status = await confirmAndApplyPendingWrite(process.cwd(), pending);
+                  
+                  // Use the new UI for confirmation
+                  const status = await promptForWriteConfirmation(pending);
                   
                   if (status === 'approved') {
+                    await applyPendingWrite(process.cwd(), pending);
                     result = `Successfully wrote to ${args.path}`;
+                    logToolEvent({
+                      type: 'writeFile',
+                      target: args.path,
+                      status: 'ok',
+                      message: 'File saved successfully.'
+                    });
                   } else {
                     result = 'ERROR: User rejected the write operation. The file was NOT saved/updated. You must inform the user that the action was cancelled and the file remains unchanged.';
+                    logToolEvent({
+                      type: 'writeFile',
+                      target: args.path,
+                      status: 'cancelled',
+                      message: 'User rejected the write.'
+                    });
                   }
                 } catch (err) {
                   result = `Error preparing write: ${(err as Error).message}`;
+                  logToolEvent({
+                    type: 'writeFile',
+                    target: args.path,
+                    status: 'error',
+                    message: (err as Error).message
+                  });
                 } finally {
                   rl.resume();
                 }
@@ -253,17 +317,20 @@ You are pmx, a product co-pilot running inside a CLI. You only know about the pr
               });
             }
             // Loop continues to send tool results back to LLM
+            // Reset timer for the next turn
+            startTime = Date.now();
+            firstChunkReceived = false;
+            process.stdout.write(chalk.magenta('✦ '));
+            
           } else {
-            // Final text response
-            clearSpinner();
-            messages.push({ role: 'assistant', content: response.content });
-            console.log(response.content);
+            // Final text response (already streamed)
+            messages.push({ role: 'assistant', content: responseContent });
             keepGoing = false;
           }
         }
 
       } catch (error) {
-        clearSpinner();
+        console.log(''); // Ensure newline
         console.error(chalk.red(`Error: ${(error as Error).message}`));
         
         // Only pop the user message if we haven't progressed in the conversation

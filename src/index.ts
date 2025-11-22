@@ -3,7 +3,7 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 import { program } from 'commander';
-import { startRepl } from './repl';
+import { startRepl } from './cli/repl';
 
 program
   .version('0.0.1')

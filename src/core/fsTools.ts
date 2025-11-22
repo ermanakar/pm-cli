@@ -1,7 +1,5 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as inquirer from 'inquirer';
-import chalk from 'chalk';
 
 // --- Types ---
 
@@ -169,60 +167,15 @@ export async function prepareDocWrite(
 }
 
 /**
- * Interactively confirm and apply a pending write.
+ * Apply a pending write to disk.
+ * This function assumes confirmation has already happened.
  */
-export async function confirmAndApplyPendingWrite(
+export async function applyPendingWrite(
   projectRoot: string, 
   pending: PendingWrite
-): Promise<WriteStatus> {
-  console.log(chalk.yellow(`\nAI wants to write to '${pending.path}'`));
-  console.log(chalk.dim(`Reason: ${pending.reason}`));
-  
-  // Show a small preview of the NEW content
-  const preview = pending.newContent.slice(0, 400) + (pending.newContent.length > 400 ? '...' : '');
-  console.log(chalk.gray('--- New Content Preview ---'));
-  console.log(preview);
-  console.log(chalk.gray('---------------------------'));
-
-  // Interactive loop
-  while (true) {
-    const answer = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'action',
-        message: 'How do you want to proceed?',
-        choices: [
-          { name: 'Show Full Content', value: 'show' },
-          { name: 'Approve and Write', value: 'approve' },
-          { name: 'Reject', value: 'reject' }
-        ]
-      }
-    ]);
-
-    if (answer.action === 'show') {
-      console.log(chalk.gray('--- Full Content Start ---'));
-      console.log(pending.newContent);
-      console.log(chalk.gray('--- Full Content End ---'));
-      continue; // Loop back to menu
-    }
-
-    if (answer.action === 'approve') {
-      const docPath = normalizePath(projectRoot, pending.path, 'write');
-      try {
-        const dir = path.dirname(docPath.absolutePath);
-        await fs.mkdir(dir, { recursive: true });
-        await fs.writeFile(docPath.absolutePath, pending.newContent, 'utf-8');
-        console.log(chalk.green(`Saved ${pending.path}`));
-        return 'approved';
-      } catch (err) {
-        console.error(chalk.red(`Error writing file: ${(err as Error).message}`));
-        return 'rejected'; // Treat write error as rejection
-      }
-    }
-
-    if (answer.action === 'reject') {
-      console.log(chalk.red('Operation cancelled by user.'));
-      return 'rejected';
-    }
-  }
+): Promise<void> {
+  const docPath = normalizePath(projectRoot, pending.path, 'write');
+  const dir = path.dirname(docPath.absolutePath);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(docPath.absolutePath, pending.newContent, 'utf-8');
 }

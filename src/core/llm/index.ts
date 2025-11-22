@@ -11,6 +11,7 @@ export interface LLMMessage {
 
 export interface LLMClient {
   chat(messages: LLMMessage[], tools?: any[]): Promise<LLMResponse>;
+  chatStream?(messages: LLMMessage[], tools?: any[], onChunk?: (chunk: string) => void): Promise<LLMResponse>;
 }
 
 export interface LLMResponse {
