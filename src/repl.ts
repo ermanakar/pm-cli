@@ -4,7 +4,7 @@ import * as path from 'path';
 import chalk from 'chalk';
 import * as inquirer from 'inquirer';
 import { createDefaultLLMClient, LLMMessage } from './core/llm';
-import { loadProjectContext } from './core/context';
+import { buildProjectContext } from './core/context';
 
 const TOOLS = [
   {
@@ -61,11 +61,12 @@ export async function startRepl() {
     input: process.stdin,
     output: process.stdout,
     prompt: chalk.blue('pmx> '),
+    terminal: true
   });
 
   try {
     const llm = createDefaultLLMClient();
-    const { systemContext, loadedFiles } = loadProjectContext();
+    const projectContext = await buildProjectContext(process.cwd());
 
     const systemPrompt = `
 **1. CORE IDENTITY & GOAL**
@@ -73,46 +74,35 @@ You are pmx, an expert Product Manager AI co-pilot designed for technical founde
 Your goal is to bridge the gap between product strategy and technical execution.
 You are running inside a CLI tool in the user's terminal.
 
-**2. CONTEXT AWARENESS**
-You have access to a subset of the project's context (wrapped in <project_context>).
-- <file path="...">: Content of high-value files (PMX.md, package.json, etc.).
-- <file-tree>: High-level map of the project structure.
+**2. HOW TO THINK**
+- **Analyze Intent**: Understand what the user wants to achieve (e.g., "Draft a PRD", "Audit this feature").
+- **Clarify First**: If the request is broad, ask 2-3 strategic questions to narrow down the scope before generating full documents.
+- **Propose Structure**: Before writing big artifacts, briefly outline your plan.
+- **Be Terse**: No fluff. Start answering immediately.
 
-**3. AGENTIC WORKFLOW (CRITICAL)**
-You are not just a chatbot; you are an agent. When the user makes a request (e.g., "Draft a PRD", "Analyze this feature"):
-1. **EXPLORE FIRST**: Do not guess. Use \`list_files\` and \`read_file\` to gather information about the current codebase and docs.
-   - *Example*: If asked for "Dark Mode", check if any UI code or existing design docs exist first.
-2. **CLARIFY**: If the user's request is broad, ask 2-3 strategic questions to narrow down the scope *before* generating full documents.
-3. **PLAN & EXECUTE**: Briefly state your plan to the user, then execute it using tools.
+**3. CAPABILITIES & TOOLS**
+- **Context Aware**: You have access to a subset of the project's context (wrapped in <project_context>).
+- **Read-Only (Code)**: You CANNOT modify source code. You can only read files to understand the current state.
+- **Write-Allowed (Docs)**: You CAN write/update files in the \`docs/\` directory using the \`write_file\` tool.
+- **Tools**:
+  - \`read_file\`: Read content of specific files.
+  - \`list_files\`: Explore directories.
+  - \`write_file\`: Create or update documentation.
 
-**4. TOOL USAGE**
-- You have access to tools: read_file, list_files, write_file.
-- **USE THEM AUTONOMOUSLY**.
-- If you need to see a file, call read_file.
-- If you need to explore a folder, call list_files.
-- If you need to create a PRD or doc, call write_file.
+**4. LIMITATIONS**
+- You cannot arbitrarily run shell commands.
+- You cannot directly access the network.
+- Do not hallucinate "I changed file X" – only describe what should be changed unless you explicitly used the \`write_file\` tool.
 
-**5. AUDIENCE ADAPTATION**
-- The user is a **Founder/Engineer**. They understand code.
-- Do NOT simplify technical terms.
-- DO connect technical decisions to product outcomes.
+**5. PROJECT CONTEXT**
+The following block contains the files pmx has loaded from the repository. This is your "long-term memory" of the project.
 
-**6. LIMITATIONS & GUARDRAILS**
-- **READ-ONLY (Code)**: You CANNOT modify source code (src/, app/, etc.).
-- **WRITE-ALLOWED (Docs)**: You CAN write/update files in the \`docs/\` directory.
-
-**7. TONE & STYLE**
-- **Terse & No-Fluff**: Start answering immediately.
-- **Opinionated**: If a feature idea is bad, say so and explain why based on the metrics/vision.
-- **Structured**: Use Markdown headers, bullet points, and bold text.
-
-You will now be provided with project context inside <project_context> tags.
 <project_context>
-${systemContext || "No persistent context files found."}
+${projectContext.summary || "No persistent context files found."}
 </project_context>
 
 **FINAL REMINDER:**
-You are pmx. Don't just answer; **investigate** and **act**.
+You are pmx, a product co-pilot running inside a CLI. You only know about the project files that have been loaded into <project_context> and what the user tells you in this session. Do not claim access to any other files unless you read them with \`read_file\`.
 `;
 
     const messages: LLMMessage[] = [
@@ -122,8 +112,8 @@ You are pmx. Don't just answer; **investigate** and **act**.
       },
     ];
 
-    if (loadedFiles.length > 0) {
-      console.log(chalk.dim(`Loaded context from: ${loadedFiles.join(', ')}`));
+    if (projectContext.sources.length > 0) {
+      console.log(chalk.dim(`Loaded context from: ${projectContext.sources.map(s => s.path).join(', ')}`));
     }
 
     let isProcessing = false;
@@ -151,11 +141,18 @@ You are pmx. Don't just answer; **investigate** and **act**.
             break;
             
           case '/context':
-            console.log(chalk.dim('Loaded Context Files:'));
-            if (loadedFiles.length === 0) {
+            console.log(chalk.bold('Project context loaded from:'));
+            if (projectContext.sources.length === 0) {
               console.log(chalk.dim('  (None)'));
+              console.log(chalk.yellow('No project context files found. You can create PMX.md or docs/product-vision.md to give pmx more background.'));
             } else {
-              loadedFiles.forEach(f => console.log(chalk.dim(`  - ${f}`)));
+              projectContext.sources.forEach(s => console.log(chalk.dim(`- ${s.path}`)));
+              console.log(chalk.bold('\nPreviews:'));
+              projectContext.sources.forEach(s => {
+                console.log(chalk.cyan(`[${s.path}]`));
+                console.log(chalk.dim(s.preview));
+                console.log('');
+              });
             }
             break;
 
@@ -293,7 +290,7 @@ You are pmx. Don't just answer; **investigate** and **act**.
                   }
                 } else {
                   console.log(chalk.red('Operation cancelled by user.'));
-                  result = 'User denied the write operation.';
+                  result = 'ERROR: User rejected the write operation. The file was NOT saved/updated. You must inform the user that the action was cancelled and the file remains unchanged.';
                 }
               }
 
