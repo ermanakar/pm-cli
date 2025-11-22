@@ -6,6 +6,7 @@ import * as inquirer from 'inquirer';
 import { createDefaultLLMClient, LLMMessage } from '../core/llm';
 import { buildProjectContext } from '../core/context';
 import { listDocFiles, readDocFile, prepareDocWrite, applyPendingWrite } from '../core/fsTools';
+import { runInvestigation } from '../core/investigator/engine';
 import { logToolEvent, promptForWriteConfirmation } from './ui';
 
 const TOOLS = [
@@ -50,6 +51,20 @@ const TOOLS = [
           reason: { type: 'string', description: 'Short reason for this change (e.g. "Add dark mode FAQ")' }
         },
         required: ['path', 'content', 'reason']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_investigation',
+      description: 'Run a deep, autonomous investigation of the codebase to answer a complex question. Use this when you need to understand how something works before proposing changes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          objective: { type: 'string', description: 'The question or goal to investigate (e.g. "How does auth work?")' }
+        },
+        required: ['objective']
       }
     }
   }
@@ -140,6 +155,7 @@ You are pmx, a product co-pilot running inside a CLI. You only know about the pr
             console.log(chalk.dim('Available commands:'));
             console.log(chalk.dim('  /help         - Show this help message'));
             console.log(chalk.dim('  /context      - Show loaded context files'));
+            console.log(chalk.dim('  /investigate  - Run a deep codebase investigation'));
             console.log(chalk.dim('  /quit         - Exit the application'));
             break;
             
@@ -163,6 +179,65 @@ You are pmx, a product co-pilot running inside a CLI. You only know about the pr
             rl.close();
             process.exit(0);
             return;
+
+          case '/investigate':
+            const objectiveText = args.join(' ');
+            if (!objectiveText) {
+              console.log(chalk.yellow('Usage: /investigate <objective>'));
+              break;
+            }
+            
+            console.log(chalk.magenta(`\n🕵️  Starting investigation: "${objectiveText}"`));
+            console.log(chalk.dim('This may take a minute...\n'));
+
+            // Pause RL to prevent input interference during investigation
+            rl.pause();
+
+            try {
+              const result = await runInvestigation(
+                { text: objectiveText },
+                { maxTurns: 10, maxTimeMs: 3 * 60 * 1000 }
+              );
+
+              console.log(chalk.bold('\n--- Investigation Complete ---\n'));
+              console.log(chalk.bold('Summary:'));
+              console.log(result.summary);
+              console.log('\n' + chalk.dim('─'.repeat(40)) + '\n');
+              console.log(result.details);
+              
+              // Offer to save
+              const saveAnswer = await inquirer.prompt([{
+                type: 'confirm',
+                name: 'save',
+                message: 'Save this report to docs/investigations/?',
+                default: false
+              }]);
+
+              if (saveAnswer.save) {
+                const slug = objectiveText.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50);
+                const filename = `docs/investigations/${slug}.md`;
+                const fileContent = `# Investigation: ${objectiveText}\n\n## Summary\n${result.summary}\n\n## Details\n${result.details}\n\n## Evidence\n${result.evidence.map(e => `- **${e.path}**: ${e.summary}`).join('\n')}`;
+                
+                const pending = await prepareDocWrite(process.cwd(), filename, fileContent, 'Save investigation report');
+                const status = await promptForWriteConfirmation(pending);
+                if (status === 'approved') {
+                   await applyPendingWrite(process.cwd(), pending);
+                   logToolEvent({ type: 'writeFile', target: filename, status: 'ok', message: 'Report saved.' });
+                }
+              }
+
+              // Feed the investigation result back into the main chat context
+              messages.push({
+                role: 'system',
+                content: `[System] The user ran an investigation: "${objectiveText}".\n\nResult Summary:\n${result.summary}\n\nResult Details:\n${result.details}\n\n(You can now answer questions based on this investigation.)`
+              });
+
+            } catch (err) {
+               console.error(chalk.red(`Investigation failed: ${(err as Error).message}`));
+            } finally {
+              rl.resume();
+            }
+            break;
             
           default:
             console.log(chalk.yellow('Unknown command. Type /help for options.'));
@@ -301,6 +376,37 @@ You are pmx, a product co-pilot running inside a CLI. You only know about the pr
                   logToolEvent({
                     type: 'writeFile',
                     target: args.path,
+                    status: 'error',
+                    message: (err as Error).message
+                  });
+                } finally {
+                  rl.resume();
+                }
+              } else if (fnName === 'run_investigation') {
+                console.log(chalk.magenta(`\n🕵️  Starting investigation: "${args.objective}"`));
+                rl.pause();
+                try {
+                  const invResult = await runInvestigation(
+                    { text: args.objective },
+                    { maxTurns: 10, maxTimeMs: 3 * 60 * 1000 }
+                  );
+                  
+                  // We return the full details in the tool result so the LLM sees it immediately
+                  // and the message chain remains valid (assistant -> tool).
+                  result = `Investigation Complete.\n\nSUMMARY:\n${invResult.summary}\n\nDETAILS:\n${invResult.details}\n\nEVIDENCE:\n${invResult.evidence.map(e => `- ${e.path}: ${e.summary}`).join('\n')}`;
+
+                  logToolEvent({
+                    type: 'shell',
+                    target: 'investigator',
+                    status: 'ok',
+                    message: 'Investigation finished.'
+                  });
+
+                } catch (err) {
+                  result = `Investigation failed: ${(err as Error).message}`;
+                  logToolEvent({
+                    type: 'shell',
+                    target: 'investigator',
                     status: 'error',
                     message: (err as Error).message
                   });

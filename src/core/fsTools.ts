@@ -24,6 +24,11 @@ export interface PendingWrite {
 
 export type WriteStatus = 'approved' | 'rejected';
 
+export interface SearchResult {
+  path: string;
+  matches: string[];
+}
+
 // --- Constants ---
 
 const ALLOWED_WRITE_PREFIXES = ['docs/', '.pmx/'];
@@ -117,6 +122,44 @@ export async function listDocFiles(projectRoot: string, prefix: string = 'docs/'
 
   await scan(startDir);
   return results;
+}
+
+/**
+ * Search for a string or regex pattern in allowed files.
+ */
+export async function searchFiles(projectRoot: string, pattern: string, caseSensitive: boolean = false): Promise<SearchResult[]> {
+  const allFiles = await listDocFiles(projectRoot, ''); // List all allowed files
+  const results: SearchResult[] = [];
+  const regex = new RegExp(pattern, caseSensitive ? 'g' : 'gi');
+
+  for (const filePath of allFiles) {
+    try {
+      const fullPath = path.join(projectRoot, filePath);
+      const content = await fs.readFile(fullPath, 'utf-8');
+      
+      const fileMatches: string[] = [];
+      const lines = content.split('\n');
+      
+      lines.forEach((line, index) => {
+        if (regex.test(line)) {
+          // Reset lastIndex for global regex to ensure correct testing
+          regex.lastIndex = 0; 
+          fileMatches.push(`Line ${index + 1}: ${line.trim()}`);
+        }
+      });
+
+      if (fileMatches.length > 0) {
+        results.push({
+          path: filePath,
+          matches: fileMatches.slice(0, 10) // Limit matches per file to avoid huge outputs
+        });
+      }
+    } catch (err) {
+      // Ignore read errors during search
+    }
+  }
+
+  return results.slice(0, 20); // Limit total files returned
 }
 
 /**

@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format cjs --no-dts --sourcemap false --no-minify --clean",
+    "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "test": "vitest"
   },
