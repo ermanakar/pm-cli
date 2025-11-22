@@ -5,17 +5,18 @@ import chalk from 'chalk';
 import * as inquirer from 'inquirer';
 import { createDefaultLLMClient, LLMMessage } from './core/llm';
 import { buildProjectContext } from './core/context';
+import { listDocFiles, readDocFile, prepareDocWrite, confirmAndApplyPendingWrite } from './core/fsTools';
 
 const TOOLS = [
   {
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Read the contents of a file. Use this when you need to see code or docs.',
+      description: 'Read the contents of a file. Allowed paths: docs/**, .pmx/**, src/**, package.json, README.md, etc.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'The path to the file to read' }
+          path: { type: 'string', description: 'The relative path to the file (e.g. src/index.ts)' }
         },
         required: ['path']
       }
@@ -25,11 +26,11 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'list_files',
-      description: 'List files in a directory.',
+      description: 'List files in the project. Recursive by default.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'The directory path' }
+          path: { type: 'string', description: 'The directory path (default: docs/)' }
         },
         required: ['path']
       }
@@ -39,14 +40,15 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'write_file',
-      description: 'Write content to a file in the docs/ directory.',
+      description: 'Propose a write to a documentation file. The user will review and confirm.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'The path to write to (must start with docs/)' },
-          content: { type: 'string', description: 'The full content of the file' }
+          path: { type: 'string', description: 'The path to write to (must start with docs/ or .pmx/)' },
+          content: { type: 'string', description: 'The full content of the file' },
+          reason: { type: 'string', description: 'Short reason for this change (e.g. "Add dark mode FAQ")' }
         },
-        required: ['path', 'content']
+        required: ['path', 'content', 'reason']
       }
     }
   }
@@ -82,10 +84,10 @@ You are running inside a CLI tool in the user's terminal.
 
 **3. CAPABILITIES & TOOLS**
 - **Context Aware**: You have access to a subset of the project's context (wrapped in <project_context>).
-- **Read-Only (Code)**: You CANNOT modify source code. You can only read files to understand the current state.
+- **Read-Only (Code)**: You CAN read source code to understand the current state, but you CANNOT modify it.
 - **Write-Allowed (Docs)**: You CAN write/update files in the \`docs/\` directory using the \`write_file\` tool.
 - **Tools**:
-  - \`read_file\`: Read content of specific files.
+  - \`read_file\`: Read content of specific files (code or docs).
   - \`list_files\`: Explore directories.
   - \`write_file\`: Create or update documentation.
 
@@ -211,86 +213,35 @@ You are pmx, a product co-pilot running inside a CLI. You only know about the pr
               if (fnName === 'read_file') {
                 console.log(chalk.dim(`Reading ${args.path}...`));
                 try {
-                  const fullPath = path.resolve(process.cwd(), args.path);
-                  if (fs.existsSync(fullPath)) {
-                    result = fs.readFileSync(fullPath, 'utf-8');
-                  } else {
-                    result = `Error: File ${args.path} not found.`;
-                  }
+                  const doc = await readDocFile(process.cwd(), args.path);
+                  result = doc.content;
                 } catch (err) {
                   result = `Error reading file: ${(err as Error).message}`;
                 }
               } else if (fnName === 'list_files') {
                 console.log(chalk.dim(`Listing ${args.path}...`));
                 try {
-                  const fullPath = path.resolve(process.cwd(), args.path);
-                  if (fs.existsSync(fullPath)) {
-                    const files = fs.readdirSync(fullPath);
-                    result = files.join('\n');
-                  } else {
-                    result = `Error: Directory ${args.path} not found.`;
-                  }
+                  const files = await listDocFiles(process.cwd(), args.path);
+                  result = files.join('\n');
                 } catch (err) {
                   result = `Error listing directory: ${(err as Error).message}`;
                 }
               } else if (fnName === 'write_file') {
-                console.log(chalk.yellow(`\nAI wants to write to '${args.path}'`));
-                
                 // Interactive confirmation
                 rl.pause();
-                let answer;
                 try {
-                  answer = await inquirer.prompt([
-                    {
-                      type: 'list',
-                      name: 'action',
-                      message: 'How do you want to proceed?',
-                      choices: [
-                        { name: 'Approve and Write', value: 'approve' },
-                        { name: 'Reject', value: 'reject' },
-                        { name: 'Show Content', value: 'show' }
-                      ]
-                    }
-                  ]);
-
-                  if (answer.action === 'show') {
-                    console.log(chalk.gray('--- Content Start ---'));
-                    console.log(args.content);
-                    console.log(chalk.gray('--- Content End ---'));
-                    
-                    const confirm = await inquirer.prompt([
-                      {
-                        type: 'confirm',
-                        name: 'ok',
-                        message: 'Write this file now?',
-                        default: true
-                      }
-                    ]);
-                    
-                    if (confirm.ok) {
-                      answer.action = 'approve';
-                    } else {
-                      answer.action = 'reject';
-                    }
+                  const pending = await prepareDocWrite(process.cwd(), args.path, args.content, args.reason || 'No reason provided');
+                  const status = await confirmAndApplyPendingWrite(process.cwd(), pending);
+                  
+                  if (status === 'approved') {
+                    result = `Successfully wrote to ${args.path}`;
+                  } else {
+                    result = 'ERROR: User rejected the write operation. The file was NOT saved/updated. You must inform the user that the action was cancelled and the file remains unchanged.';
                   }
+                } catch (err) {
+                  result = `Error preparing write: ${(err as Error).message}`;
                 } finally {
                   rl.resume();
-                }
-
-                if (answer && answer.action === 'approve') {
-                  try {
-                    const fullPath = path.resolve(process.cwd(), args.path);
-                    const dir = path.dirname(fullPath);
-                    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                    fs.writeFileSync(fullPath, args.content, 'utf-8');
-                    console.log(chalk.green(`Saved ${args.path}`));
-                    result = `Successfully wrote to ${args.path}`;
-                  } catch (err) {
-                    result = `Error writing file: ${(err as Error).message}`;
-                  }
-                } else {
-                  console.log(chalk.red('Operation cancelled by user.'));
-                  result = 'ERROR: User rejected the write operation. The file was NOT saved/updated. You must inform the user that the action was cancelled and the file remains unchanged.';
                 }
               }
 
