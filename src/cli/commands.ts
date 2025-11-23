@@ -2,6 +2,7 @@ import * as readline from 'readline';
 import chalk from 'chalk';
 import * as inquirer from 'inquirer';
 import { runInvestigation } from '../core/investigator/engine';
+import { runFeatureFlow } from '../core/scribe/engine';
 import { prepareDocWrite, applyPendingWrite } from '../core/fsTools';
 import { logToolEvent, promptForWriteConfirmation } from './ui';
 import { LLMMessage } from '../core/llm';
@@ -61,6 +62,46 @@ export async function handleInvestigateCommand(
 
   } catch (err) {
      console.error(chalk.red(`Investigation failed: ${(err as Error).message}`));
+  } finally {
+    rl.resume();
+  }
+}
+
+export async function handleFeatureCommand(
+  args: string[], 
+  rl: readline.Interface, 
+  messages: LLMMessage[]
+): Promise<void> {
+  const requestText = args.join(' ');
+  if (!requestText) {
+    console.log(chalk.yellow('Usage: /plan <feature description>'));
+    return;
+  }
+  
+  console.log(chalk.cyan(`\n✍️  Starting feature planning: "${requestText}"`));
+  console.log(chalk.dim('I will draft a spec for you...\n'));
+
+  rl.pause();
+
+  try {
+    const result = await runFeatureFlow(
+      { title: 'Feature Request', description: requestText },
+      { maxTurns: 10 }
+    );
+
+    console.log(chalk.bold('\n--- Planning Complete ---\n'));
+    console.log(chalk.bold('Summary:'));
+    console.log(result.summary);
+    console.log('\n' + chalk.dim('─'.repeat(40)) + '\n');
+    console.log(chalk.green(`Draft saved to: ${result.path}`));
+
+    messages.push({
+      role: 'system',
+      content: `[System] The user ran a feature plan: "${requestText}".\n\nResult Summary:\n${result.summary}\n\nOutput File:\n${result.path}\n\n(You can now discuss this spec.)`
+    });
+
+  } catch (err) {
+     console.error(chalk.red(`Planning failed: ${(err as Error).message}`));
   } finally {
     rl.resume();
   }

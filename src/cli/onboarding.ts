@@ -2,7 +2,7 @@ import * as readline from 'readline';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import chalk from 'chalk';
-import * as inquirer from 'inquirer';
+import prompts from 'prompts';
 import { listDocFiles, readDocFile } from '../core/fsTools';
 import { createDefaultLLMClient } from '../core/llm';
 
@@ -77,12 +77,18 @@ export async function runInitFlow(): Promise<void> {
     console.log(chalk.bold.cyan(`\n❓ Question ${qIndex}/${questions.length}:`));
     console.log(chalk.bold(q));
     
-    const { answer } = await inquirer.prompt([{
-      type: 'input',
+    const { answer } = await prompts({
+      type: 'text',
       name: 'answer',
       message: '>',
-      prefix: ''
-    }]);
+      onState: (state) => {
+        if (state.aborted) {
+          process.exit(0);
+        }
+      }
+    });
+    
+    if (!answer) continue;
     answers[q] = answer;
     qIndex++;
   }

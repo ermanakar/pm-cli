@@ -8,7 +8,7 @@ import { buildProjectContext } from '../core/context';
 import { REPL_TOOLS } from './tools/definitions';
 import { handleToolCall } from './tools/handlers';
 import { generateSystemPrompt } from '../core/prompts';
-import { handleInvestigateCommand } from './commands';
+import { handleInvestigateCommand, handleFeatureCommand } from './commands';
 import { runInitFlow } from './onboarding';
 
 export async function startRepl() {
@@ -36,19 +36,36 @@ export async function startRepl() {
 
     // Dashboard / HUD
     console.clear();
-    console.log(chalk.bold.cyan('╭──────────────────────────────────────────────────────╮'));
-    console.log(chalk.bold.cyan('│  pmx – Product Co-pilot                       v0.1   │'));
-    console.log(chalk.bold.cyan('╰──────────────────────────────────────────────────────╯'));
+    const border = chalk.gray('────────────────────────────────────────────────────────────────');
+    console.log(chalk.bold.cyan(`\n  pmx – Product Co-pilot v0.1`));
+    console.log(border);
     
     if (projectContext.sources.length > 0) {
       const pmxFile = projectContext.sources.find(s => s.path === 'PMX.md');
+      
       if (pmxFile) {
-        const visionMatch = pmxFile.content.match(/## Vision\r?\n(.*)/);
-        const vision = visionMatch ? visionMatch[1].trim() : 'No vision set';
-        console.log(`   Project:  ${chalk.bold(path.basename(process.cwd()))}`);
-        console.log(`   Vision:   "${chalk.italic(vision)}"`);
+        // Helper to extract sections robustly
+        const extract = (name: string) => {
+          const regex = new RegExp(`##\\s*.*?${name}.*?\\n([\\s\\S]*?)(?=\\n##|$)`, 'i');
+          const match = pmxFile.content.match(regex);
+          return match ? match[1].trim() : null;
+        };
+
+        const vision = extract('Vision') || 'No vision set';
+        const stack = extract('Tech Stack') || extract('Technical') || 'Unknown';
+        const roadmap = extract('Roadmap') || '';
+        
+        // Extract first milestone from roadmap if possible (looking for "- [ ] ...")
+        const nextMilestone = roadmap.match(/- \[ \] (.*)/)?.[1] || 'No active milestone';
+
+        console.log(`  ${chalk.bold('Project:')}   ${chalk.white(path.basename(process.cwd()))}`);
+        console.log(`  ${chalk.bold('Stack:')}     ${chalk.dim(stack.split('\n')[0].replace(/, /g, ' • '))}`);
+        console.log(`  ${chalk.bold('Vision:')}    ${chalk.italic(vision.split('\n')[0].slice(0, 70) + (vision.length > 70 ? '...' : ''))}`);
+        console.log(`  ${chalk.bold('Focus:')}     ${chalk.green(nextMilestone)}`);
       }
-      console.log(chalk.dim(`\n   [i] Context loaded: ${projectContext.sources.length} files`));
+      
+      console.log(border);
+      console.log(chalk.dim(`  [i] ${projectContext.sources.length} context files loaded`));
       
       // Smart Suggestions
       let suggestion = "Type /help to see what I can do.";
@@ -61,13 +78,12 @@ export async function startRepl() {
          suggestion = "Ask me to 'Plan a new feature' to start building.";
       }
       
-      console.log(chalk.yellow(`\n   💡 Tip: ${suggestion}`));
+      console.log(chalk.yellow(`  💡 Tip: ${suggestion}`));
+      console.log('');
 
     } else {
       console.log(chalk.yellow('\n   [!] No context loaded.'));
     }
-    
-    console.log(''); // Spacer
 
     const messages: LLMMessage[] = [
       {
@@ -98,11 +114,25 @@ export async function startRepl() {
         
         switch (command) {
           case '/help':
-            console.log(chalk.dim('Available commands:'));
-            console.log(chalk.dim('  /help         - Show this help message'));
-            console.log(chalk.dim('  /context      - Show loaded context files'));
-            console.log(chalk.dim('  /investigate  - Run a deep codebase investigation'));
-            console.log(chalk.dim('  /quit         - Exit the application'));
+            console.log(chalk.bold.cyan('\n📘  pmx Help & Commands'));
+            console.log(chalk.dim('──────────────────────────────────────────────────'));
+            
+            console.log(chalk.bold('\nCore Commands:'));
+            console.log(`  ${chalk.cyan('/help')}         Show this help message`);
+            console.log(`  ${chalk.cyan('/quit')}         Exit the application`);
+            
+            console.log(chalk.bold('\nContext & Analysis:'));
+            console.log(`  ${chalk.cyan('/context')}      View loaded files (PMX.md, docs, etc.)`);
+            console.log(`  ${chalk.cyan('/investigate')}  Run a deep scan on a specific feature/folder`);
+            console.log(chalk.dim('                 Usage: /investigate <path> <question>'));
+            console.log(`  ${chalk.cyan('/plan')}         Draft a new feature spec or PRD`);
+            console.log(chalk.dim('                 Usage: /plan <feature description>'));
+
+            console.log(chalk.bold('\nNatural Language Examples:'));
+            console.log(`  • "Plan the user authentication feature"`);
+            console.log(`  • "Why is the build failing?"`);
+            console.log(`  • "Draft a PRD for the dashboard"`);
+            console.log('');
             break;
             
           case '/context':
@@ -128,6 +158,11 @@ export async function startRepl() {
 
           case '/investigate':
             await handleInvestigateCommand(args, rl, messages);
+            break;
+
+          case '/plan':
+          case '/feature':
+            await handleFeatureCommand(args, rl, messages);
             break;
             
           default:
