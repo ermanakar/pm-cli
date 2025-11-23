@@ -1,5 +1,9 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 // --- Types ---
 
@@ -52,7 +56,7 @@ const PREVIEW_LENGTH = 200;
 function normalizePath(projectRoot: string, relativePath: string, operation: 'read' | 'write'): DocPath {
   // Ensure path is relative and clean
   const cleanRelative = path.normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, '');
-  
+
   if (operation === 'write') {
     const isAllowed = ALLOWED_WRITE_PREFIXES.some(prefix => {
       if (prefix.endsWith('/')) {
@@ -93,22 +97,22 @@ function normalizePath(projectRoot: string, relativePath: string, operation: 're
  * @param depth Max recursion depth (default: infinity).
  */
 export async function listDocFiles(
-  projectRoot: string, 
-  prefix: string = 'docs/', 
+  projectRoot: string,
+  prefix: string = 'docs/',
   recursive: boolean = true,
   depth: number = 10
 ): Promise<string[]> {
   const results: string[] = [];
-  
+
   let cleanPrefix = path.normalize(prefix).replace(/^(\.\.(\/|\\|$))+/, '');
   if (cleanPrefix === '.') cleanPrefix = '';
-  
+
   const startDir = path.join(projectRoot, cleanPrefix);
 
   try {
     await fs.access(startDir);
   } catch {
-    return []; 
+    return [];
   }
 
   async function scan(dir: string, currentDepth: number) {
@@ -118,7 +122,7 @@ export async function listDocFiles(
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       const relPath = path.relative(projectRoot, fullPath);
-      
+
       // Check blocklist
       const isBlocked = BLOCKED_READ_PREFIXES.some(prefix => {
         if (prefix.endsWith('/')) {
@@ -130,14 +134,14 @@ export async function listDocFiles(
       if (isBlocked) continue;
 
       if (entry.isDirectory()) {
-         if (recursive) {
-            await scan(fullPath, currentDepth + 1);
-         } else {
-            // If not recursive, we still want to indicate it's a folder
-            results.push(relPath + '/');
-         }
+        if (recursive) {
+          await scan(fullPath, currentDepth + 1);
+        } else {
+          // If not recursive, we still want to indicate it's a folder
+          results.push(relPath + '/');
+        }
       } else if (entry.isFile()) {
-         results.push(relPath);
+        results.push(relPath);
       }
     }
   }
@@ -149,39 +153,37 @@ export async function listDocFiles(
 /**
  * Search for a string or regex pattern in allowed files.
  */
-export async function searchFiles(projectRoot: string, pattern: string, caseSensitive: boolean = false): Promise<SearchResult[]> {
-  const allFiles = await listDocFiles(projectRoot, ''); // List all allowed files
-  const results: SearchResult[] = [];
-  const regex = new RegExp(pattern, caseSensitive ? 'g' : 'gi');
+export async function searchFiles(cwd: string, pattern: string): Promise<string[]> {
+  // Safety: Limit the number of matches to prevent context explosion
+  const MAX_MATCHES = 50;
+  const MAX_PREVIEW_LENGTH = 200;
 
-  for (const filePath of allFiles) {
-    try {
-      const fullPath = path.join(projectRoot, filePath);
-      const content = await fs.readFile(fullPath, 'utf-8');
-      
-      const fileMatches: string[] = [];
-      const lines = content.split('\n');
-      
-      lines.forEach((line, index) => {
-        if (regex.test(line)) {
-          // Reset lastIndex for global regex to ensure correct testing
-          regex.lastIndex = 0; 
-          fileMatches.push(`Line ${index + 1}: ${line.trim()}`);
-        }
-      });
+  try {
+    const { stdout } = await execAsync(`grep -r "${pattern}" .`, { cwd, maxBuffer: 1024 * 1024 });
+    const lines = stdout.split('\n').filter(Boolean);
 
-      if (fileMatches.length > 0) {
-        results.push({
-          path: filePath,
-          matches: fileMatches.slice(0, 10) // Limit matches per file to avoid huge outputs
-        });
-      }
-    } catch (err) {
-      // Ignore read errors during search
+    // Filter out blocked prefixes
+    const allowedLines = lines.filter(line => {
+      const filePath = line.split(':')[0];
+      return !BLOCKED_READ_PREFIXES.some(prefix => filePath.startsWith(prefix));
+    });
+
+    if (allowedLines.length > MAX_MATCHES) {
+      return [
+        ...allowedLines.slice(0, MAX_MATCHES),
+        `... and ${allowedLines.length - MAX_MATCHES} more matches (truncated for safety)`
+      ];
     }
-  }
 
-  return results.slice(0, 20); // Limit total files returned
+    return allowedLines.map(line => {
+      if (line.length > MAX_PREVIEW_LENGTH) {
+        return line.substring(0, MAX_PREVIEW_LENGTH) + '...';
+      }
+      return line;
+    });
+  } catch (error) {
+    return [];
+  }
 }
 
 /**
@@ -189,15 +191,23 @@ export async function searchFiles(projectRoot: string, pattern: string, caseSens
  */
 export async function readDocFile(projectRoot: string, relativePath: string): Promise<DocContent> {
   const docPath = normalizePath(projectRoot, relativePath, 'read');
-  
+
   try {
     const content = await fs.readFile(docPath.absolutePath, 'utf-8');
-    let preview = content.slice(0, PREVIEW_LENGTH);
-    if (content.length > PREVIEW_LENGTH) preview += '...';
-    
+
+    // Safety: Truncate massive files
+    const MAX_CHARS = 10000;
+    let safeContent = content;
+    if (content.length > MAX_CHARS) {
+      safeContent = content.slice(0, MAX_CHARS) + `\n\n[...File truncated. Total size: ${content.length} chars. Use a more specific search or read in chunks...]`;
+    }
+
+    let preview = safeContent.slice(0, PREVIEW_LENGTH);
+    if (safeContent.length > PREVIEW_LENGTH) preview += '...';
+
     return {
       path: docPath.relativePath,
-      content,
+      content: safeContent,
       preview
     };
   } catch (err) {
@@ -209,9 +219,9 @@ export async function readDocFile(projectRoot: string, relativePath: string): Pr
  * Prepare a write operation without executing it.
  */
 export async function prepareDocWrite(
-  projectRoot: string, 
-  relativePath: string, 
-  newContent: string, 
+  projectRoot: string,
+  relativePath: string,
+  newContent: string,
   reason: string
 ): Promise<PendingWrite> {
   const docPath = normalizePath(projectRoot, relativePath, 'write');
@@ -236,11 +246,14 @@ export async function prepareDocWrite(
  * This function assumes confirmation has already happened.
  */
 export async function applyPendingWrite(
-  projectRoot: string, 
+  projectRoot: string,
   pending: PendingWrite
 ): Promise<void> {
   const docPath = normalizePath(projectRoot, pending.path, 'write');
-  const dir = path.dirname(docPath.absolutePath);
-  await fs.mkdir(dir, { recursive: true });
+
+  // Ensure directory exists
+  await fs.mkdir(path.dirname(docPath.absolutePath), { recursive: true });
+
+  // Write file
   await fs.writeFile(docPath.absolutePath, pending.newContent, 'utf-8');
 }

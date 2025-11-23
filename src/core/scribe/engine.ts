@@ -44,7 +44,7 @@ export async function runFeatureFlow(
   config: ScribeConfig
 ): Promise<ScribeResult> {
   const llm = createDefaultLLMClient();
-  
+
   // 1. Grounding Step: Investigate the repo first to establish identity
   // We do this *before* starting the main loop to prevent "I am pmx" hallucinations.
   let repoContext = "No specific repo context found.";
@@ -126,7 +126,7 @@ Be autonomous. Do not ask the user for more input unless absolutely necessary.
 
   while (turns < config.maxTurns) {
     turns++;
-    
+
     // Non-streaming for the sub-agent loop
     const response = await llm.chat(messages, TOOLS);
     const content = response.content || '';
@@ -140,7 +140,7 @@ Be autonomous. Do not ask the user for more input unless absolutely necessary.
 
     if (!toolCalls || toolCalls.length === 0) {
       if (turns === config.maxTurns - 1) {
-         messages.push({ role: 'user', content: "You are running out of turns. Please write the document now." });
+        messages.push({ role: 'user', content: "You are running out of turns. Please write the document now." });
       }
       continue;
     }
@@ -158,39 +158,39 @@ Be autonomous. Do not ask the user for more input unless absolutely necessary.
           // Run Critic
           logToolEvent({ type: 'shell', target: 'critic', status: 'pending', message: 'Verifying PRD against repo identity...' });
           const criticResult = await runCritic(args.content, repoContext);
-          
+
           if (!criticResult.valid || criticResult.warnings.length > 0) {
-             logToolEvent({ type: 'shell', target: 'critic', status: 'error', message: 'Identity mismatch detected.' });
-             console.log(chalk.yellow('\n⚠️  CRITIC WARNINGS:'));
-             criticResult.warnings.forEach((w: string) => console.log(chalk.red(`  - ${w}`)));
-             console.log(chalk.dim('You can proceed, but the PRD might be hallucinating the wrong project.\n'));
+            logToolEvent({ type: 'shell', target: 'critic', status: 'error', message: 'Identity mismatch detected.' });
+            console.log(chalk.yellow('\n⚠️  CRITIC WARNINGS:'));
+            criticResult.warnings.forEach((w: string) => console.log(chalk.red(`  - ${w}`)));
+            console.log(chalk.dim('You can proceed, but the PRD might be hallucinating the wrong project.\n'));
           } else {
-             logToolEvent({ type: 'shell', target: 'critic', status: 'ok', message: 'PRD aligns with repo identity.' });
+            logToolEvent({ type: 'shell', target: 'critic', status: 'ok', message: 'PRD aligns with repo identity.' });
           }
 
           const pending = await prepareDocWrite(process.cwd(), args.filename, args.content, `Feature Flow: ${request.title}`);
-          
+
           // We assume the user *wants* this since they asked for the flow, 
           // but we still use the safe confirmation UI.
           const status = await promptForWriteConfirmation(pending);
-          
+
           if (status === 'approved') {
             await applyPendingWrite(process.cwd(), pending);
             result = `Successfully wrote to ${args.filename}`;
             logToolEvent({ type: 'writeFile', target: args.filename, status: 'ok', message: 'PRD saved.' });
-            
+
             finalResult = {
               path: args.filename,
               summary: `Created PRD for "${request.title}" at ${args.filename}`
             };
-            
+
             // We are done!
             return finalResult;
-            
+
           } else {
             result = 'User rejected the write.';
             if (!criticResult.valid || criticResult.warnings.length > 0) {
-               result += `\n\nCRITIC WARNINGS (The user likely rejected it because of these):\n${criticResult.warnings.map(w => `- ${w}`).join('\n')}\n\nPlease fix these issues and try again.`;
+              result += `\n\nCRITIC WARNINGS (The user likely rejected it because of these):\n${criticResult.warnings.map(w => `- ${w}`).join('\n')}\n\nPlease fix these issues and try again.`;
             }
             logToolEvent({ type: 'writeFile', target: args.filename, status: 'cancelled', message: 'User rejected.' });
           }
@@ -261,43 +261,32 @@ If valid is false, provide clear warnings.`
   }
 }
 
+import { MemoryManager } from '../memory/memory';
+
 async function getOrComputeRepoIdentity(cwd: string): Promise<string> {
-  const cachePath = path.join(cwd, '.pmx', 'context.json');
-  
-  try {
-    const content = await fs.readFile(cachePath, 'utf-8');
-    const data = JSON.parse(content);
-    if (data.repoIdentity) {
-      logToolEvent({ type: 'shell', target: 'cache', status: 'ok', message: 'Loaded repo identity from cache.' });
-      return data.repoIdentity;
-    }
-  } catch (e) {
-    // ignore
+  const memoryManager = new MemoryManager(cwd);
+  let memory = await memoryManager.load();
+
+  if (memory.identity.name && memory.identity.stack) {
+    logToolEvent({ type: 'shell', target: 'memory', status: 'ok', message: 'Loaded repo identity from memory.' });
+    return `Project: ${memory.identity.name}\nStack: ${memory.identity.stack}\nVision: ${memory.identity.vision}`;
   }
 
   logToolEvent({ type: 'shell', target: 'investigator', status: 'pending', message: 'Grounding: Analyzing repo identity...' });
-  const groundingResult = await runInvestigation(
-    { text: "Identify the product name, tech stack, and key architecture patterns of this repository. Is this the 'pmx' CLI repo itself, or a different user project?" },
-    { maxTurns: 3, maxTimeMs: 30 * 1000 }
-  );
-  const repoContext = groundingResult.summary;
-  logToolEvent({ type: 'shell', target: 'investigator', status: 'ok', message: 'Repo identity established.' });
 
-  // Save to cache
-  try {
-    const dir = path.dirname(cachePath);
-    await fs.mkdir(dir, { recursive: true });
-    
-    let existingData = {};
-    try {
-      const content = await fs.readFile(cachePath, 'utf-8');
-      existingData = JSON.parse(content);
-    } catch (e) {}
-    
-    await fs.writeFile(cachePath, JSON.stringify({ ...existingData, repoIdentity: repoContext }, null, 2));
-  } catch (e) {
-    console.error('Failed to save repo identity to cache:', e);
+  // We run an investigation and explicitly ask it to update memory
+  await runInvestigation(
+    { text: "Identify the product name, tech stack, and key architecture patterns. Use the 'update_memory' tool to save this identity." },
+    { maxTurns: 5, maxTimeMs: 30 * 1000 }
+  );
+
+  // Reload memory to see if it was updated
+  memory = await memoryManager.load();
+
+  if (memory.identity.name) {
+    logToolEvent({ type: 'shell', target: 'investigator', status: 'ok', message: 'Repo identity established and saved.' });
+    return `Project: ${memory.identity.name}\nStack: ${memory.identity.stack}\nVision: ${memory.identity.vision}`;
   }
 
-  return repoContext;
+  return "Identity could not be established automatically.";
 }

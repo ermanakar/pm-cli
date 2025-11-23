@@ -2,6 +2,8 @@ import { createDefaultLLMClient, LLMMessage } from '../llm';
 import { listDocFiles, readDocFile, searchFiles } from '../fsTools';
 import { InvestigationConfig, InvestigationObjective, InvestigationResult, EvidenceItem } from './types';
 import { logToolEvent } from '../../cli/ui';
+import { MemoryManager } from '../memory/memory';
+import chalk from 'chalk';
 
 const TOOLS = [
   {
@@ -51,6 +53,34 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'update_memory',
+      description: 'Update the persistent product memory with new findings.',
+      parameters: {
+        type: 'object',
+        properties: {
+          identity: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              stack: { type: 'string' },
+              vision: { type: 'string' }
+            }
+          },
+          addRisk: {
+            type: 'object',
+            properties: {
+              description: { type: 'string' },
+              severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+              mitigation: { type: 'string' }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'submit_report',
       description: 'Submit the final investigation report and end the session.',
       parameters: {
@@ -58,8 +88,8 @@ const TOOLS = [
         properties: {
           summary: { type: 'string', description: 'Executive summary of findings' },
           details: { type: 'string', description: 'Detailed markdown report' },
-          evidence: { 
-            type: 'array', 
+          evidence: {
+            type: 'array',
             items: {
               type: 'object',
               properties: {
@@ -82,25 +112,34 @@ export async function runInvestigation(
   config: InvestigationConfig
 ): Promise<InvestigationResult> {
   const llm = createDefaultLLMClient();
+  const memoryManager = new MemoryManager(process.cwd());
+  const memory = await memoryManager.load();
   const startTime = Date.now();
-  
+
   const systemPrompt = `
 You are a Codebase Investigator for pmx.
 Your goal is to answer the user's objective by exploring the codebase.
 
 OBJECTIVE: "${objective.text}"
 
+CURRENT MEMORY:
+Identity: ${JSON.stringify(memory.identity)}
+Risks: ${JSON.stringify(memory.risks)}
+
 GUIDELINES:
 1. Start by listing files in root ('.') to understand the structure.
 2. Explore interesting directories one by one. Do NOT list the entire drive recursively at once.
 3. Use 'search_files' to find keywords.
 4. Use 'read_file' to examine relevant code.
-5. Accumulate evidence.
-6. When you have enough information, call 'submit_report'.
-7. Do not hallucinate files. Only use what you see.
-8. Be efficient. You have a limited number of turns.
+5. If you find new information about the project identity or risks, use 'update_memory'.
+6. Accumulate evidence.
+7. When you have enough information, call 'submit_report'.
+8. Do not hallucinate files. Only use what you see.
+9. Be efficient. You have a limited number of turns.
 
 You cannot modify files. You are read-only.
+
+IMPORTANT: Before calling any tool, you MUST explain your reasoning in the response content. Tell the user what you are thinking and why you are choosing this tool.
 `;
 
   const messages: LLMMessage[] = [
@@ -115,11 +154,16 @@ You cannot modify files. You are read-only.
     }
 
     turns++;
-    
+
     // We don't stream here, we just wait for the decision
     const response = await llm.chat(messages, TOOLS);
     const content = response.content || '';
     const toolCalls = response.tool_calls;
+
+    // Display Thinking
+    if (content) {
+      console.log(chalk.dim(`\n💭  ${content.replace(/\n/g, '\n    ')}`));
+    }
 
     messages.push({
       role: 'assistant',
@@ -131,8 +175,8 @@ You cannot modify files. You are read-only.
       // If the model just talks without calling tools, we nudge it or just continue.
       // But if it thinks it's done without submitting, we should remind it.
       if (turns === config.maxTurns - 1) {
-         messages.push({ role: 'user', content: "You are out of turns. Please call submit_report now with what you have." });
-         continue;
+        messages.push({ role: 'user', content: "You are out of turns. Please call submit_report now with what you have." });
+        continue;
       }
       // Otherwise, just let it continue (maybe it's thinking aloud)
       continue;
@@ -161,21 +205,34 @@ You cannot modify files. You are read-only.
           const targetPath = args.path || '.';
           const recursive = args.recursive || false;
           const depth = args.depth || 2;
-          
+
           const files = await listDocFiles(process.cwd(), targetPath, recursive, depth);
-          
+
           // Truncate if too many files
           let fileList = files.join('\n');
           if (files.length > 100) {
             fileList = files.slice(0, 100).join('\n') + `\n... (${files.length - 100} more files)`;
           }
-          
+
           result = fileList;
           logToolEvent({ type: 'readFolder', target: targetPath, status: 'ok', message: `Found ${files.length} files` });
         } else if (fnName === 'search_files') {
           const matches = await searchFiles(process.cwd(), args.pattern);
           result = JSON.stringify(matches, null, 2);
           logToolEvent({ type: 'shell', target: `grep "${args.pattern}"`, status: 'ok', message: `Found ${matches.length} files with matches` });
+        } else if (fnName === 'update_memory') {
+          if (args.identity) {
+            await memoryManager.updateIdentity(args.identity);
+            result += 'Identity updated. ';
+          }
+          if (args.addRisk) {
+            // We don't have a direct addRisk method yet, let's just load/save
+            const mem = await memoryManager.load();
+            mem.risks.push(args.addRisk);
+            await memoryManager.save(mem);
+            result += 'Risk added. ';
+          }
+          logToolEvent({ type: 'shell', target: 'memory', status: 'ok', message: 'Context updated.' });
         }
       } catch (err) {
         result = `Error: ${(err as Error).message}`;

@@ -8,6 +8,7 @@ import { createDefaultLLMClient } from '../core/llm';
 import { saveGlobalConfig } from '../core/config';
 import { runFeatureFlow } from '../core/scribe/engine';
 import { runInvestigation } from '../core/investigator/engine';
+import { MemoryManager } from '../core/memory/memory';
 
 export async function runInitFlow(): Promise<void> {
   console.log(chalk.bold.cyan('\n🚀  Welcome to pmx! Let\'s onboard your project.\n'));
@@ -19,7 +20,7 @@ export async function runInitFlow(): Promise<void> {
   } catch (e) {
     console.log(chalk.yellow('\n⚠️  No OpenAI API Key found.'));
     console.log(chalk.dim('pmx requires an API key to generate plans and analyze code.'));
-    
+
     const { apiKey } = await prompts({
       type: 'password',
       name: 'apiKey',
@@ -29,21 +30,21 @@ export async function runInitFlow(): Promise<void> {
     if (apiKey) {
       saveGlobalConfig({ openaiApiKey: apiKey });
       console.log(chalk.green('✓ Saved API key to global config.'));
-      
+
       // Try again
       try {
         llm = createDefaultLLMClient();
       } catch (e2) {
-         console.log(chalk.red('Still could not initialize LLM client. Proceeding in basic mode.'));
+        console.log(chalk.red('Still could not initialize LLM client. Proceeding in basic mode.'));
       }
     } else {
-       console.log(chalk.yellow('Skipping AI setup. Falling back to basic mode.'));
+      console.log(chalk.yellow('Skipping AI setup. Falling back to basic mode.'));
     }
   }
 
   // 1. Deep Scan & Context Gathering
   console.log(chalk.blue('🔍  Scanning project structure...'));
-  
+
   let context = '';
   let stack: string[] = [];
   let productProfile = {
@@ -52,11 +53,13 @@ export async function runInitFlow(): Promise<void> {
     suggestedNextSteps: [] as string[]
   };
 
+  const memoryManager = new MemoryManager(process.cwd());
+
   if (llm) {
     console.log(chalk.dim('    Running deep investigation (this may take 30-60s)...'));
     try {
       const investigation = await runInvestigation({
-        text: "Perform a comprehensive analysis of this project. Identify the tech stack, core functionality, folder structure, and business purpose. Read key source files to understand the implementation."
+        text: "Perform a comprehensive analysis of this project. GOAL: Identify the specific business domain (e.g., 'Handwriting Analysis', 'E-commerce', 'Crypto Wallet') and the tech stack. Look for unique business logic in 'src', 'app', or 'lib' folders. Do NOT just say 'It is a Next.js app'. Find the *purpose*."
       }, {
         maxTurns: 8, // Give it enough turns to explore
         maxTimeMs: 60 * 1000
@@ -74,10 +77,10 @@ ${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
       `;
 
       console.log(chalk.green(`✓  Deep analysis complete.`));
-      
+
       // 2. The "Magic Mirror" - Generate Product Profile
       console.log(chalk.blue('\n🧠  Synthesizing Product Identity...'));
-      
+
       const profilePrompt = `
         You are a Product Visionary.
         Based on the investigation below, create a "Product Identity Card" for this project.
@@ -96,7 +99,41 @@ ${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
       const response = await llm.chat([{ role: 'user', content: profilePrompt }]);
       const jsonStr = response.content?.match(/\{[\s\S]*\}/)?.[0];
       if (jsonStr) {
-        productProfile = JSON.parse(jsonStr);
+        let draftProfile = JSON.parse(jsonStr);
+
+        // 2.5 Self-Reflection & Refinement
+        console.log(chalk.dim('\n💭  Refining product identity...'));
+
+        const reflectionPrompt = `
+          You just created this Product Identity:
+          ${JSON.stringify(draftProfile, null, 2)}
+
+          CRITIQUE THIS:
+          1. Is the "oneLiner" too generic? (e.g. "A Next.js app" is bad. "A platform for X to do Y" is good).
+          2. Does it capture the *specific* business logic found in the investigation?
+          3. Are the "suggestedNextSteps" concrete and high-impact?
+
+          OUTPUT:
+          Return a REFINED JSON object with the same structure. 
+          Make the oneLiner sharper and the next steps more actionable.
+        `;
+
+        const reflectionResponse = await llm.chat([{ role: 'user', content: reflectionPrompt }]);
+        const refinedJsonStr = reflectionResponse.content?.match(/\{[\s\S]*\}/)?.[0];
+
+        if (refinedJsonStr) {
+          productProfile = JSON.parse(refinedJsonStr);
+          console.log(chalk.dim('    Identity refined based on deep context.'));
+        } else {
+          productProfile = draftProfile;
+        }
+
+        // Save to Memory
+        await memoryManager.updateIdentity({
+          name: path.basename(process.cwd()),
+          stack: "Detected during onboarding", // We could parse this better
+          vision: productProfile.oneLiner
+        });
       }
 
     } catch (e) {
@@ -109,7 +146,7 @@ ${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
       if (llm && context) {
         console.log(chalk.dim('    Attempting to generate profile from shallow context...'));
         try {
-           const profilePrompt = `
+          const profilePrompt = `
              You are a Product Visionary.
              Based on the shallow context below, create a "Product Identity Card" for this project.
              
@@ -121,21 +158,21 @@ ${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
              - "targetAudience": Who is this for?
              - "suggestedNextSteps": 3 specific next steps.
            `;
-           const response = await llm.chat([{ role: 'user', content: profilePrompt }]);
-           const jsonStr = response.content?.match(/\{[\s\S]*\}/)?.[0];
-           if (jsonStr) {
-             productProfile = JSON.parse(jsonStr);
-           }
+          const response = await llm.chat([{ role: 'user', content: profilePrompt }]);
+          const jsonStr = response.content?.match(/\{[\s\S]*\}/)?.[0];
+          if (jsonStr) {
+            productProfile = JSON.parse(jsonStr);
+          }
         } catch (e2) {
-           // Ignore
+          // Ignore
         }
-     }
+      }
     }
   } else {
     stack = await detectStack();
     context = await gatherInitialContext();
   }
-  
+
   // 3. The Reveal & Confirmation
   console.log(chalk.bold('\n✨  Here is what I see:'));
   console.log(chalk.dim('──────────────────────────────────────────────────'));
@@ -167,33 +204,12 @@ ${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
   await createDocsFolder();
   console.log(chalk.green('✓  PMX.md created.'));
 
-  // 5. The Kickstart - Pick a feature to build NOW
+  // 5. The Kickstart - Removed in favor of manual exploration
   if (productProfile.suggestedNextSteps.length > 0) {
-    console.log(chalk.bold('\n🚀  Let\'s get to work. Which of these should we tackle first?'));
-    
-    const choice = await prompts({
-      type: 'select',
-      name: 'feature',
-      message: 'Select a feature to plan:',
-      choices: [
-        ...productProfile.suggestedNextSteps.map(s => ({ title: s, value: s })),
-        { title: 'None (I will choose later)', value: 'none' }
-      ]
-    });
-
-    if (choice.feature && choice.feature !== 'none') {
-      console.log(chalk.cyan(`\n⚡️  Drafting spec for: "${choice.feature}"...`));
-      try {
-        const result = await runFeatureFlow(
-          { title: choice.feature, description: "Drafted during onboarding kickstart." },
-          { maxTurns: 8 }
-        );
-        console.log(chalk.green(`\n✓  Spec created at ${result.path}`));
-        console.log(chalk.dim('   You can edit this file or run /plan to refine it.'));
-      } catch (e) {
-        console.log(chalk.red('Failed to draft spec: ' + (e as Error).message));
-      }
-    }
+    console.log(chalk.bold('\n🚀  You are ready to go.'));
+    console.log(chalk.dim('    Here are some things you could build next:'));
+    productProfile.suggestedNextSteps.forEach(step => console.log(chalk.cyan(`    - ${step}`)));
+    console.log(chalk.dim('\n    Run /plan <feature> to start building one of these.'));
   }
 
   console.log(chalk.bold.green('\n✨  Onboarding complete!'));
@@ -203,7 +219,7 @@ ${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
 function showTutorial() {
   console.log(chalk.bold.cyan('\n📘  How to use pmx'));
   console.log(chalk.dim('──────────────────────────────────────────────────'));
-  
+
   console.log(chalk.bold('\n1. The Mental Model'));
   console.log(`   pmx acts as your ${chalk.bold('Product Co-pilot')}. It reads your code and`);
   console.log(`   ${chalk.bold('PMX.md')} to understand context. You plan, it helps build.`);
@@ -227,24 +243,24 @@ function showTutorial() {
 async function gatherInitialContext(): Promise<string> {
   let context = '';
   const cwd = process.cwd();
-  
+
   // Read README
   try {
     const readme = await readDocFile(cwd, 'README.md');
     context += `\n--- README.md ---\n${readme.content.slice(0, 2000)}\n`;
-  } catch {}
+  } catch { }
 
   // Read package.json
   try {
     const pkg = await readDocFile(cwd, 'package.json');
     context += `\n--- package.json ---\n${pkg.content}\n`;
-  } catch {}
+  } catch { }
 
   // List top-level files
   try {
     const files = await listDocFiles(cwd, '.', false);
     context += `\n--- Root Files ---\n${files.join('\n')}\n`;
-  } catch {}
+  } catch { }
 
   return context;
 }
@@ -252,12 +268,12 @@ async function gatherInitialContext(): Promise<string> {
 async function detectStack(): Promise<string[]> {
   const stack: string[] = [];
   const rootFiles = await listDocFiles(process.cwd(), '.', false);
-  
+
   if (rootFiles.includes('package.json')) {
     try {
       const pkg = JSON.parse((await readDocFile(process.cwd(), 'package.json')).content);
       const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-      
+
       if (deps['react']) stack.push('React');
       if (deps['next']) stack.push('Next.js');
       if (deps['vue']) stack.push('Vue');
@@ -269,7 +285,7 @@ async function detectStack(): Promise<string[]> {
       // Ignore parse errors
     }
   }
-  
+
   if (rootFiles.includes('tsconfig.json') && !stack.includes('TypeScript')) stack.push('TypeScript');
   if (rootFiles.includes('go.mod')) stack.push('Go');
   if (rootFiles.includes('Cargo.toml')) stack.push('Rust');
