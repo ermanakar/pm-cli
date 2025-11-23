@@ -1,74 +1,122 @@
-# pmx - Product CLI for Founder/Engineers
+# pmx - The Product Operating System for Developers
 
-`pmx` is a command-line interface (CLI) tool designed to empower founder/engineers in their product management workflows. It acts as an intelligent co-pilot that lives in your terminal, helping you plan features, investigate code, and maintain product context.
+`pmx` is an intelligent CLI companion that lives in your terminal, helping you **plan features**, **investigate code**, and **maintain product context** without leaving your workflow.
+
+It bridges the gap between **Product Thinking** and **Engineering Execution** by treating your codebase as the source of truth.
 
 ## 🚀 Getting Started
 
 ### Installation
 
-You can install `pmx` globally or as a dev dependency in your project.
-
-### Option A: Per-Project (Recommended)
-
-Add it to your project to ensure everyone on the team uses the same version.
-
-```bash
-npm install -D pmx
-```
-
-Then run it via:
-
-```bash
-npx pmx
-```
-
-### Option B: Global Install
-
-Install it once and use it anywhere.
-
 ```bash
 npm install -g pmx
 ```
 
-Then run it via:
+### Setup
+
+1.  **Navigate to your project root.**
+2.  **Run the CLI:**
+    ```bash
+    pmx
+    ```
+3.  **Onboarding:**
+    If this is your first time, run `/init` to scan your codebase and establish a "Product Identity".
+    ```bash
+    > /init
+    ```
+    *This creates a `.pmx/` folder to store project context, memory, and configuration.*
+
+---
+
+## 🧠 Core Workflows
+
+### 1. Investigate (`/investigate`)
+Ask complex questions about your codebase. `pmx` uses a "Deep Thinking" agent to explore files, search patterns, and synthesize answers.
 
 ```bash
-pmx
+> /investigate How is authentication handled in this project?
 ```
+*Features:*
+- **Deep Thinking:** The agent plans its approach, reads files, and verifies findings.
+- **Visual Feedback:** A spinner shows real-time thought processes.
+- **Memory:** Permanent architectural insights are saved to `memory.json`.
 
-### Prerequisites
+### 2. Plan (`/plan`)
+Draft detailed Feature Specifications (PRDs) based on your codebase's actual architecture.
 
-`pmx` requires an OpenAI API Key to function.
+```bash
+> /plan Add a "Forgot Password" flow
+```
+*Features:*
+- **Context-Aware:** Checks existing components to recommend reuse.
+- **Structured Output:** Generates a Markdown file in `docs/features/`.
+- **Critique Loop:** The agent critiques its own plan before finalizing.
 
-1. Create a `.env` file in your project root.
-2. Add your key:
+### 3. Execute (`/tickets`)
+Turn a PRD into actionable engineering tickets.
 
-   ```bash
-   OPENAI_API_KEY=sk-...
-   ```
+```bash
+> /tickets docs/features/forgot-password.md
+```
+*Features:*
+- **Breakdown:** Splits big features into frontend, backend, and database tasks.
+- **Export:** Generates a CSV (importable to Jira/Linear) and a JSON file.
+- **Acceptance Criteria:** Automatically adds ACs to every ticket.
 
-## Vision and Core Principles
+### 4. Strategize (`/roadmap`)
+Visualize and manage your high-level goals.
 
-### Read Anything, Write Almost Nothing (by default)
+```bash
+> /roadmap
+```
+*Features:*
+- **Visual Timeline:** See what's Now, Next, and Later.
+- **Interactive:** Add or move items directly from the CLI.
+- **File-Based:** Updates `roadmap.md` in your repo.
 
-`pmx` is built on the core principle of being a **read-heavy, write-light** tool. By default, it has extensive capabilities to analyze, summarize, and extract information from your codebase and documentation. This allows founder/engineers to:
+### 5. Context (`/context`)
+See what `pmx` knows about your project.
 
-- **Deeply understand existing systems:** Quickly get insights into code, architecture, and dependencies.
-- **Analyze product artifacts:** Process and synthesize information from product specifications, user stories, and documentation.
-- **Inform strategic decisions:** Leverage AI to identify patterns, suggest improvements, and answer complex questions about the product.
+```bash
+> /context
+```
+*Features:*
+- **Identity:** Displays the project name, vision, and stack.
+- **Insights:** Shows accumulated architectural knowledge (e.g., "Database is Postgres").
+- **Files:** Lists loaded context files.
 
-While `pmx` excels at reading and analysis, its ability to write or modify files is strictly controlled and limited. By default, `pmx` is allowed to write only to designated product documentation directories (e.g., `docs/`) and its own configuration files (`.pmx/`). This design choice ensures:
+---
 
-- **Codebase Protection:** Prevents accidental or AI-hallucinated modifications to critical source code (`src/`, `app/`, `backend/`, etc.).
-- **Clear Ownership:** Establishes a clear boundary where product managers own the narrative and artifacts (managed via `pmx`), while engineers (and their specialized tools) retain ownership and control over code implementation.
-- **Controlled Evolution:** Any functionality requiring code modification will be explicit and opt-in, ensuring deliberate engineering oversight.
+## 📂 Configuration
 
-### Bridging Product and Engineering
+`pmx` stores its brain in the `.pmx/` directory:
 
-`pmx` aims to be the central hub for:
+- **`memory.json`**: The long-term memory (Identity, Risks, Insights).
+- **`config.json`**: (Optional) Custom settings.
 
-- **Product Documentation:** Effortlessly navigate, query, and generate product visions, PRDs, feature one-pagers, and metrics.
-- **Strategic Insight:** Turn raw data and diffuse information into actionable insights for product development.
-- **Workflow Automation:** Automate repetitive product management tasks, freeing up valuable time for strategic thinking and execution.
+### "Read-Heavy, Write-Light" Philosophy
+By default, `pmx` is designed to **read** your entire codebase but only **write** to:
+- `docs/` (Documentation)
+- `.pmx/` (Internal Memory)
+- `roadmap.md` (Strategy)
 
-This tool is for those who want to drive product forward with clarity, precision, and a deep, AI-augmented understanding of both the market and the underlying technology.
+It will **never** modify your source code (`src/`) without explicit permission (future feature).
+
+---
+
+## ⌨️ Shortcuts
+
+- **`/quit`**: Exit the CLI and get a summary of your session.
+- **`Ctrl+C`**: Cancel the current operation.
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! Please see `CONTRIBUTING.md` for details.
+
+## ✨ Acknowledgements
+
+This project was architected and developed with the assistance of **Google's Gemini 3 Pro**.
+
+License: MIT
