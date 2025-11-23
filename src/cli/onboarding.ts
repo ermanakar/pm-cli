@@ -58,11 +58,22 @@ export async function runInitFlow(): Promise<void> {
   if (llm) {
     console.log(chalk.dim('    Running deep investigation (this may take 30-60s)...'));
     try {
+      // Phase 1: Deep Scan
+      console.log(chalk.dim('\n💭  Thinking [1/3]: Investigating project structure and key files...'));
       const investigation = await runInvestigation({
-        text: "Perform a comprehensive analysis of this project. GOAL: Identify the specific business domain (e.g., 'Handwriting Analysis', 'E-commerce', 'Crypto Wallet') and the tech stack. Look for unique business logic in 'src', 'app', or 'lib' folders. Do NOT just say 'It is a Next.js app'. Find the *purpose*."
+        text: `
+          Perform a structured analysis of this project.
+          
+          1. READ 'package.json' to understand dependencies and scripts.
+          2. LOOK for 'prisma/schema.prisma' or database schemas to understand the data model.
+          3. SCAN 'app', 'src', or 'lib' for core business logic.
+          
+          GOAL: Identify the *specific* business domain (e.g. "Handwriting Service", not just "Next.js App").
+          Capture key "Domain Nouns" (e.g. "Plotter", "Postcard", "Recipient").
+        `
       }, {
-        maxTurns: 8, // Give it enough turns to explore
-        maxTimeMs: 60 * 1000
+        maxTurns: 10,
+        maxTimeMs: 90 * 1000
       });
 
       context = `
@@ -78,8 +89,8 @@ ${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
 
       console.log(chalk.green(`✓  Deep analysis complete.`));
 
-      // 2. The "Magic Mirror" - Generate Product Profile
-      console.log(chalk.blue('\n🧠  Synthesizing Product Identity...'));
+      // Phase 2: Draft Identity
+      console.log(chalk.dim('\n💭  Thinking [2/3]: Drafting initial identity...'));
 
       const profilePrompt = `
         You are a Product Visionary.
@@ -89,33 +100,36 @@ ${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
         ${context}
         
         Return a JSON object with:
-        - "oneLiner": A punchy, 1-sentence description of what this product IS (e.g. "A SaaS boilerplate for dog walkers").
-        - "targetAudience": Who is this for? (e.g. "Solo founders building MVPs").
-        - "suggestedNextSteps": An array of 3 specific, high-impact features or tasks the user should build NEXT. 
-           (e.g. "Add Stripe Subscription", "Create User Dashboard", "Setup CI/CD").
-           Do not suggest things that are already built.
+        - "oneLiner": A punchy, 1-sentence description of what this product IS.
+        - "targetAudience": Who is this for?
+        - "suggestedNextSteps": An array of 3 specific, high-impact features.
       `;
 
       const response = await llm.chat([{ role: 'user', content: profilePrompt }]);
       const jsonStr = response.content?.match(/\{[\s\S]*\}/)?.[0];
+
       if (jsonStr) {
         let draftProfile = JSON.parse(jsonStr);
 
-        // 2.5 Self-Reflection & Refinement
-        console.log(chalk.dim('\n💭  Refining product identity...'));
+        // Phase 3: Domain Reflection
+        console.log(chalk.dim('\n💭  Thinking [3/3]: Reflecting on domain specificity...'));
 
         const reflectionPrompt = `
           You just created this Product Identity:
           ${JSON.stringify(draftProfile, null, 2)}
 
-          CRITIQUE THIS:
-          1. Is the "oneLiner" too generic? (e.g. "A Next.js app" is bad. "A platform for X to do Y" is good).
-          2. Does it capture the *specific* business logic found in the investigation?
-          3. Are the "suggestedNextSteps" concrete and high-impact?
+          CONTEXT:
+          ${context}
+
+          CRITICAL CHECK:
+          1. Did you mention specific "Domain Nouns" found in the code (e.g. "Plotter", "Stripe", "Postcard")?
+          2. Is the "oneLiner" too generic?
+          3. Are there contradictions with the codebase?
 
           OUTPUT:
-          Return a REFINED JSON object with the same structure. 
-          Make the oneLiner sharper and the next steps more actionable.
+          Return a REFINED JSON object. 
+          - Inject missing domain nouns into the oneLiner.
+          - Ensure next steps are concrete.
         `;
 
         const reflectionResponse = await llm.chat([{ role: 'user', content: reflectionPrompt }]);
@@ -123,7 +137,7 @@ ${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
 
         if (refinedJsonStr) {
           productProfile = JSON.parse(refinedJsonStr);
-          console.log(chalk.dim('    Identity refined based on deep context.'));
+          console.log(chalk.dim('    Identity refined with domain specifics.'));
         } else {
           productProfile = draftProfile;
         }
@@ -131,7 +145,7 @@ ${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
         // Save to Memory
         await memoryManager.updateIdentity({
           name: path.basename(process.cwd()),
-          stack: "Detected during onboarding", // We could parse this better
+          stack: "Detected during onboarding",
           vision: productProfile.oneLiner
         });
       }
@@ -186,6 +200,12 @@ ${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
     message: 'Does this sound right?',
     initial: true
   });
+
+  // Drain stdin to prevent 'y'/'n' from leaking into next command
+  if (process.stdin.isTTY) {
+    process.stdin.resume();
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
 
   if (!confirm.value) {
     // Allow manual override if AI got it wrong

@@ -98,56 +98,66 @@ function normalizePath(projectRoot: string, relativePath: string, operation: 're
  */
 export async function listDocFiles(
   projectRoot: string,
-  prefix: string = 'docs/',
-  recursive: boolean = true,
-  depth: number = 10
+  relativePath: string = '.',
+  recursive: boolean = false,
+  depth: number = 2
 ): Promise<string[]> {
-  const results: string[] = [];
+  const { absolutePath, relativePath: cleanRelative } = normalizePath(projectRoot, relativePath, 'read');
 
-  let cleanPrefix = path.normalize(prefix).replace(/^(\.\.(\/|\\|$))+/, '');
-  if (cleanPrefix === '.') cleanPrefix = '';
-
-  const startDir = path.join(projectRoot, cleanPrefix);
-
-  try {
-    await fs.access(startDir);
-  } catch {
-    return [];
+  // Safety: Prevent recursive root scan without filters
+  if (recursive && cleanRelative === '.' && depth > 1) {
+    throw new Error("Safety: Recursive scan of root directory is not allowed. Please scan specific folders (e.g. 'app', 'src') or use non-recursive mode.");
   }
 
-  async function scan(dir: string, currentDepth: number) {
-    if (currentDepth > depth) return;
+  const entries: string[] = [];
+  const maxEntries = 200; // Hard cap
 
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      const relPath = path.relative(projectRoot, fullPath);
+  async function walk(dir: string, currentDepth: number) {
+    if (currentDepth > depth) return;
+    if (entries.length >= maxEntries) return;
+
+    let files;
+    try {
+      files = await fs.readdir(dir, { withFileTypes: true });
+    } catch (e) {
+      return; // Skip if access denied or not found
+    }
+
+    for (const file of files) {
+      if (entries.length >= maxEntries) break;
+
+      const resPath = path.resolve(dir, file.name);
+      const relPath = path.relative(projectRoot, resPath);
 
       // Check blocklist
       const isBlocked = BLOCKED_READ_PREFIXES.some(prefix => {
         if (prefix.endsWith('/')) {
-          return relPath.startsWith(prefix) || relPath === prefix.slice(0, -1) || prefix.startsWith(relPath + '/');
+          return relPath.startsWith(prefix) || relPath === prefix.slice(0, -1);
         }
         return relPath === prefix;
       });
 
       if (isBlocked) continue;
 
-      if (entry.isDirectory()) {
+      if (file.isDirectory()) {
         if (recursive) {
-          await scan(fullPath, currentDepth + 1);
+          await walk(resPath, currentDepth + 1);
         } else {
-          // If not recursive, we still want to indicate it's a folder
-          results.push(relPath + '/');
+          entries.push(relPath + '/');
         }
-      } else if (entry.isFile()) {
-        results.push(relPath);
+      } else {
+        entries.push(relPath);
       }
     }
   }
 
-  await scan(startDir, 0);
-  return results;
+  await walk(absolutePath, 1);
+
+  if (entries.length >= maxEntries) {
+    entries.push("... (truncated: max 200 files)");
+  }
+
+  return entries;
 }
 
 /**

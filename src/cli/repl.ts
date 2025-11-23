@@ -1,9 +1,12 @@
 import * as readline from 'readline';
+import { MemoryManager } from '../core/memory/memory';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
+import { Spinner } from './spinner';
 import { createDefaultLLMClient, LLMMessage } from '../core/llm';
 import { buildProjectContext } from '../core/context';
+import { ContextManager } from '../core/contextManager';
 import { REPL_TOOLS } from './tools/definitions';
 import { handleToolCall } from './tools/handlers';
 import { generateSystemPrompt } from '../core/prompts';
@@ -34,7 +37,7 @@ export async function startRepl() {
     // Dashboard / HUD
     console.clear();
 
-    const width = 60;
+    const width = Math.min(process.stdout.columns ? process.stdout.columns - 4 : 60, 60);
     const border = chalk.gray('─'.repeat(width));
     const top = chalk.gray('╭' + '─'.repeat(width) + '╮');
     const bottom = chalk.gray('╰' + '─'.repeat(width) + '╯');
@@ -92,12 +95,8 @@ export async function startRepl() {
     console.log(bottom);
     console.log(''); // Spacer
 
-    const messages: LLMMessage[] = [
-      {
-        role: 'system',
-        content: systemPrompt,
-      },
-    ];
+    const contextManager = new ContextManager();
+    contextManager.initialize(systemPrompt);
 
     if (projectContext.sources.length > 0) {
       console.log(chalk.dim(`Loaded context from: ${projectContext.sources.map(s => s.path).join(', ')}`));
@@ -116,56 +115,90 @@ export async function startRepl() {
 
       isProcessing = true;
 
+      // --- COMMAND MODE ---
       if (input.startsWith('/')) {
         const [command, ...args] = input.split(' ');
+
+        // Reset context for slash commands to prevent token bloat
+        // We re-initialize with the system prompt + project context
+        // But we DON'T keep the chat history.
+        // NOTE: Some commands might want history, but for stability we default to fresh.
+
+        // (Optional: We could pass the contextManager to commands if they need to manipulate it)
+        // For now, we keep the existing command signatures but note they run "outside" the main chat loop context
+        // except for the ones that take 'messages' arg - we need to fix those.
 
         switch (command) {
           case '/help':
             console.log(chalk.bold.cyan('\n📘  pmx Help & Commands'));
             console.log(chalk.dim('──────────────────────────────────────────────────'));
-
             console.log(chalk.bold('\nCore Commands:'));
             console.log(`  ${chalk.cyan('/help')}         Show this help message`);
             console.log(`  ${chalk.cyan('/quit')}         Exit the application`);
             console.log(`  ${chalk.cyan('/init')}         Run the onboarding wizard`);
-
             console.log(chalk.bold('\nContext & Analysis:'));
-            console.log(`  ${chalk.cyan('/context')}      View loaded files (PMX.md, docs, etc.)`);
-            console.log(`  ${chalk.cyan('/investigate')}  Run a deep scan on a specific feature/folder`);
-            console.log(chalk.dim('                 Usage: /investigate <path> <question>'));
-            console.log(`  ${chalk.cyan('/plan')}         Draft a new feature spec or PRD`);
-            console.log(chalk.dim('                 Usage: /plan <feature description>'));
-            console.log(`  ${chalk.cyan('/config')}       Manage global settings`);
-            console.log(chalk.dim('                 Usage: /config [list|set <key> <value>]'));
-            console.log(`  ${chalk.cyan('/roadmap')}      View or update the product roadmap`);
-            console.log(chalk.dim('                 Usage: /roadmap [request]'));
-            console.log(`  ${chalk.cyan('/tickets')}      Generate engineering tickets from a PRD`);
-            console.log(chalk.dim('                 Usage: /tickets <path/to/prd.md>'));
-
-            console.log(chalk.bold('\nNatural Language Examples:'));
-            console.log(`  • "Plan the user authentication feature"`);
-            console.log(`  • "Why is the build failing?"`);
-            console.log(`  • "Draft a PRD for the dashboard"`);
+            console.log(`  ${chalk.cyan('/context')}      View loaded files`);
+            console.log(`  ${chalk.cyan('/investigate')}  Run a deep scan`);
+            console.log(`  ${chalk.cyan('/plan')}         Draft a feature spec`);
+            console.log(`  ${chalk.cyan('/tickets')}      Generate tickets`);
             console.log('');
             break;
 
           case '/context':
-            console.log(chalk.bold('Project context loaded from:'));
+            console.log(chalk.bold('\n📂  Project Context:'));
+
+            // Load Memory
+            const memoryManager = new MemoryManager(process.cwd());
+            const memory = await memoryManager.load();
+
+            if (memory.identity.name) {
+              console.log(chalk.bold('\n🧠  Identity:'));
+              console.log(`    ${chalk.cyan('Name:')}   ${memory.identity.name}`);
+              console.log(`    ${chalk.cyan('Vision:')} ${memory.identity.vision}`);
+              console.log(`    ${chalk.cyan('Stack:')}  ${memory.identity.stack}`);
+            }
+
+            if (memory.insights && memory.insights.length > 0) {
+              console.log(chalk.bold('\n💡  Key Insights:'));
+              memory.insights.slice(-5).forEach((i: { text: string; date: string }) => {
+                console.log(`    • ${i.text} ${chalk.dim('(' + new Date(i.date).toLocaleDateString() + ')')}`);
+              });
+            }
+
+            console.log(chalk.bold('\n📄  Loaded Files:'));
             if (projectContext.sources.length === 0) {
               console.log(chalk.dim('  (None)'));
               console.log(chalk.yellow('No project context files found. You can create PMX.md or docs/product-vision.md to give pmx more background.'));
             } else {
               projectContext.sources.forEach(s => console.log(chalk.dim(`- ${s.path}`)));
-              console.log(chalk.bold('\nPreviews:'));
-              projectContext.sources.forEach(s => {
-                console.log(chalk.cyan(`[${s.path}]`));
-                console.log(chalk.dim(s.preview));
-                console.log('');
-              });
             }
             break;
 
           case '/quit':
+            // Session Summary
+            const sessionMessages = contextManager.getMessages();
+            const sessionWork = sessionMessages.filter(m => m.role === 'user' && m.content && (m.content.startsWith('/') || m.content.length > 20));
+
+            if (sessionWork.length > 0) {
+              console.log(chalk.cyan('\n👋  Wrapping up session...'));
+              const summaryPrompt = `
+                Summarize this session's achievements in 3 bullet points.
+                Focus on what was built, planned, or investigated.
+                Be concise.
+
+                Session History:
+                ${sessionMessages.map(m => `${m.role}: ${m.content || ''}`).join('\n').slice(-2000)}
+              `;
+
+              try {
+                const summary = await llm.chat([{ role: 'user', content: summaryPrompt }]);
+                console.log(chalk.bold('\n📝  Session Summary:'));
+                console.log(summary.content);
+              } catch (e) {
+                // Ignore summary errors on exit
+              }
+            }
+
             rl.close();
             process.exit(0);
             return;
@@ -182,12 +215,14 @@ export async function startRepl() {
             break;
 
           case '/investigate':
-            await handleInvestigateCommand(args, rl, messages);
+            // Pass a fresh empty array or a specific context if needed. 
+            // The command handler should manage its own agent loop.
+            await handleInvestigateCommand(args, rl, []);
             break;
 
           case '/plan':
           case '/feature':
-            await handleFeatureCommand(args, rl, messages);
+            await handleFeatureCommand(args, rl, []);
             break;
 
           case '/config':
@@ -195,11 +230,11 @@ export async function startRepl() {
             break;
 
           case '/roadmap':
-            await handleRoadmapCommand(args, rl, messages);
+            await handleRoadmapCommand(args, rl, []);
             break;
 
           case '/tickets':
-            await handleTicketsCommand(args, rl, messages);
+            await handleTicketsCommand(args, rl, []);
             break;
 
           default:
@@ -211,97 +246,63 @@ export async function startRepl() {
         return;
       }
 
-      messages.push({ role: 'user', content: input });
-      const initialMessageCount = messages.length;
+      // --- CHAT MODE (STRICT) ---
+      // No tools allowed here to prevent accidental massive scans.
+
+      contextManager.addMessage('user', input);
+      const messages = contextManager.getMessages();
 
       // Streaming UI setup
       let startTime = Date.now();
       let firstChunkReceived = false;
 
-      // We'll use a simple "✦" prompt for the AI response
-      process.stdout.write(chalk.magenta('✦ '));
+      const spinner = new Spinner('Thinking...');
+      spinner.start();
 
       try {
-        let keepGoing = true;
+        // STRICT MODE: No tools passed to chat
+        let responseContent = '';
 
-        while (keepGoing) {
-          // If the client supports streaming, use it
-          let responseContent = '';
-          let responseToolCalls: any[] | undefined;
-
-          if (llm.chatStream) {
-            const response = await llm.chatStream(messages, REPL_TOOLS, (chunk) => {
-              if (!firstChunkReceived) {
-                firstChunkReceived = true;
-                // Calculate time to first token could be logged here if needed
-              }
-              process.stdout.write(chunk);
-            });
-            responseContent = response.content || '';
-            responseToolCalls = response.tool_calls;
-
-            // Add a newline after streaming finishes
-            console.log('');
-
-            // Show timing
-            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            console.log(chalk.dim(`  (${duration}s)`));
-
-          } else {
-            // Fallback for non-streaming clients
-            const response = await llm.chat(messages, REPL_TOOLS);
-            responseContent = response.content || '';
-            responseToolCalls = response.tool_calls;
-            console.log(responseContent);
-          }
-
-          if (responseToolCalls && responseToolCalls.length > 0) {
-            // Add assistant message with tool calls
-            messages.push({
-              role: 'assistant',
-              content: responseContent,
-              tool_calls: responseToolCalls
-            });
-
-            // Process each tool call
-            for (const toolCall of responseToolCalls) {
-              const fnName = toolCall.function.name;
-              const args = JSON.parse(toolCall.function.arguments);
-
-              const result = await handleToolCall(fnName, args, rl);
-
-              messages.push({
-                role: 'tool',
-                tool_call_id: toolCall.id,
-                name: fnName,
-                content: result
-              });
+        if (llm.chatStream) {
+          const response = await llm.chatStream(messages, undefined, (chunk) => { // undefined tools
+            if (!firstChunkReceived) {
+              firstChunkReceived = true;
+              spinner.stop(); // Stop spinner on first token
+              process.stdout.write(chalk.magenta('✦ '));
             }
-            // Loop continues to send tool results back to LLM
-            // Reset timer for the next turn
-            startTime = Date.now();
-            firstChunkReceived = false;
-            process.stdout.write(chalk.magenta('✦ '));
+            process.stdout.write(chunk);
+          });
+          responseContent = response.content || '';
 
+          if (!firstChunkReceived) {
+            spinner.stop(); // Stop if no stream (shouldn't happen but safety)
+            process.stdout.write(chalk.magenta('✦ '));
+            console.log(responseContent);
           } else {
-            // Final text response (already streamed)
-            messages.push({ role: 'assistant', content: responseContent });
-            keepGoing = false;
+            console.log('');
           }
+
+          const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+          console.log(chalk.dim(`  (${duration}s)`));
+
+        } else {
+          const response = await llm.chat(messages, undefined); // undefined tools
+          spinner.stop();
+          process.stdout.write(chalk.magenta('✦ '));
+          responseContent = response.content || '';
+          console.log(responseContent);
         }
+
+        contextManager.addMessage('assistant', responseContent);
 
       } catch (error) {
-        console.log(''); // Ensure newline
+        spinner.stop();
+        console.log('');
         console.error(chalk.red(`Error: ${(error as Error).message}`));
-
-        // Only pop the user message if we haven't progressed in the conversation
-        if (messages.length === initialMessageCount) {
-          messages.pop();
-        }
+      } finally {
+        isProcessing = false;
+        rl.prompt();
       }
-
-      isProcessing = false;
-      rl.prompt();
     }).on('close', () => {
       console.log('Exiting pmx.');
       process.exit(0);

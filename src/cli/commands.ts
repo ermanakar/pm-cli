@@ -1,4 +1,6 @@
 import * as readline from 'readline';
+import * as fs from 'fs';
+import * as path from 'path';
 import chalk from 'chalk';
 import prompts from 'prompts';
 import { runInvestigation } from '../core/investigator/engine';
@@ -190,19 +192,41 @@ export async function handleTicketsCommand(
   rl: readline.Interface,
   messages: LLMMessage[]
 ): Promise<void> {
-  const prdPath = args[0];
-  if (!prdPath) {
-    console.log(chalk.yellow('Usage: /tickets <path/to/prd.md>'));
+  const inputPath = args[0];
+  if (!inputPath) {
+    console.log(chalk.red('Usage: /tickets <path-to-prd>'));
     return;
   }
 
-  console.log(chalk.cyan(`\n🎫  Generating tickets from: ${prdPath}`));
+  let targetPath = inputPath;
+
+  // UX Polish: Fuzzy match if file doesn't exist
+  if (!fs.existsSync(path.resolve(process.cwd(), targetPath))) {
+    // Try adding .md
+    if (fs.existsSync(path.resolve(process.cwd(), targetPath + '.md'))) {
+      targetPath += '.md';
+    }
+    // Try looking in docs/features
+    else if (fs.existsSync(path.resolve(process.cwd(), 'docs/features', targetPath))) {
+      targetPath = path.join('docs/features', targetPath);
+    }
+    else if (fs.existsSync(path.resolve(process.cwd(), 'docs/features', targetPath + '.md'))) {
+      targetPath = path.join('docs/features', targetPath + '.md');
+    }
+    else {
+      console.log(chalk.red(`Could not find PRD at '${inputPath}'`));
+      console.log(chalk.dim('Tip: You can use the filename (e.g. "login") if it is in docs/features.'));
+      return;
+    }
+  }
+
+  console.log(chalk.cyan(`\n🎫  Generating tickets from ${targetPath}...`));
   console.log(chalk.dim('Breaking down tasks...\n'));
 
   rl.pause();
 
   try {
-    const result = await runTicketFlow(prdPath);
+    const result = await runTicketFlow(targetPath);
 
     console.log(chalk.bold('\n--- Tickets Generated ---\n'));
     console.log(chalk.green(`✓ Created ${result.count} tickets`));
@@ -211,7 +235,7 @@ export async function handleTicketsCommand(
 
     messages.push({
       role: 'system',
-      content: `[System] The user generated tickets from ${prdPath}.\n\nOutput: ${result.path}`
+      content: `[System] The user generated tickets from ${targetPath}.\n\nOutput: ${result.path}`
     });
 
   } catch (err) {

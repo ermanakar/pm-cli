@@ -40,6 +40,7 @@ export interface ProductMemory {
     decisions: DecisionLog[];
     features: { [slug: string]: FeatureSummary };
     risks: Risk[];
+    insights: { text: string; date: string }[];
 }
 
 const DEFAULT_MEMORY: ProductMemory = {
@@ -47,7 +48,8 @@ const DEFAULT_MEMORY: ProductMemory = {
     personas: [],
     decisions: [],
     features: {},
-    risks: []
+    risks: [],
+    insights: []
 };
 
 export class MemoryManager {
@@ -89,6 +91,16 @@ export class MemoryManager {
     async addDecision(decision: Omit<DecisionLog, 'date'>): Promise<void> {
         const memory = await this.load();
         memory.decisions.push({ ...decision, date: new Date().toISOString() });
+        await this.save(memory);
+    }
+
+    async addInsight(insight: string): Promise<void> {
+        const memory = await this.load();
+        if (!memory.insights) memory.insights = [];
+        memory.insights.push({
+            text: insight,
+            date: new Date().toISOString()
+        });
         await this.save(memory);
     }
 }

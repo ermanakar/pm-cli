@@ -16,7 +16,7 @@ export interface ToolEvent {
  * Renders a structured "Tool Box" to the terminal.
  */
 export function logToolEvent(event: ToolEvent) {
-  const width = 80;
+  const width = Math.min(process.stdout.columns ? process.stdout.columns - 4 : 80, 80);
   const borderChar = '─';
   const topBorder = `╭${borderChar.repeat(width)}╮`;
   const bottomBorder = `╰${borderChar.repeat(width)}╯`;
@@ -45,26 +45,26 @@ export function logToolEvent(event: ToolEvent) {
   }
 
   // Format the title line: "✓  ReadFile docs/foo.md"
-  const typeLabel = event.type === 'readFile' ? 'ReadFile' : 
-                    event.type === 'writeFile' ? 'WriteFile' :
-                    event.type === 'readFolder' ? 'ReadFolder' : 'Shell';
-  
+  const typeLabel = event.type === 'readFile' ? 'ReadFile' :
+    event.type === 'writeFile' ? 'WriteFile' :
+      event.type === 'readFolder' ? 'ReadFolder' : 'Shell';
+
   // Calculate available space for target
   // Fixed parts: "X  Label " (3 + label.length + 1)
   const prefixLength = 3 + typeLabel.length + 1;
   const maxTargetLength = width - 2 - prefixLength;
-  
+
   let displayTarget = event.target;
   if (displayTarget.length > maxTargetLength) {
     displayTarget = '...' + displayTarget.slice(-(maxTargetLength - 3));
   }
 
   const titleContent = `${icon}  ${chalk.bold(typeLabel)} ${displayTarget}`;
-  
+
   // Calculate padding based on visible length (ignoring ANSI codes)
   const visibleLength = prefixLength + displayTarget.length;
   const padding = width - 2 - visibleLength;
-  
+
   console.log(topBorder);
   console.log(`│ ${color(titleContent)}${' '.repeat(Math.max(0, padding))} │`);
 
@@ -98,11 +98,11 @@ export function logContextSummary(summary: string) {
   const borderChar = '═';
   const topBorder = `╔${borderChar.repeat(width)}╗`;
   const bottomBorder = `╚${borderChar.repeat(width)}╝`;
-  
+
   console.log(chalk.cyan(topBorder));
   console.log(chalk.cyan(`║ 🧠  PROJECT IDENTITY ESTABLISHED${' '.repeat(width - 30)}║`));
   console.log(chalk.cyan(`╟${'─'.repeat(width)}╢`));
-  
+
   const lines = summary.split('\n');
   for (const line of lines) {
     // Simple wrapping/truncation
@@ -149,6 +149,13 @@ export async function promptForWriteConfirmation(pending: PendingWrite): Promise
       console.log(pending.newContent);
       console.log(chalk.gray('--- Full Content End ---'));
       continue;
+    }
+
+    // Drain stdin to prevent 'y'/'n' from leaking into next command
+    if (process.stdin.isTTY) {
+      process.stdin.resume();
+      // Small delay to allow buffer to clear
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
 
     return answer.choice as WriteStatus;
