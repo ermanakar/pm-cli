@@ -7,7 +7,10 @@ export class OpenAILLMClient implements LLMClient {
 
   constructor(options: { apiKey: string; model?: string }) {
     this.client = new OpenAI({ apiKey: options.apiKey });
-    this.model = options.model || 'gpt-4o-mini';
+    this.model =
+      options.model ||
+      process.env.PMX_OPENAI_MODEL ||
+      'gpt-5.1-chat-latest';
   }
 
   async chat(messages: LLMMessage[], tools?: any[]): Promise<LLMResponse> {

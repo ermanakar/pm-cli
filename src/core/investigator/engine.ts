@@ -22,11 +22,11 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'list_files',
-      description: 'List files in a directory.',
+      description: 'List files in a directory. Use "." to list everything from root, or "src/" for source code.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'The directory path (default: docs/)' }
+          path: { type: 'string', description: 'The directory path (default: .)' }
         },
         required: ['path']
       }
@@ -155,9 +155,10 @@ You cannot modify files. You are read-only.
           result = doc.content;
           logToolEvent({ type: 'readFile', target: args.path, status: 'ok', preview: doc.preview });
         } else if (fnName === 'list_files') {
-          const files = await listDocFiles(process.cwd(), args.path || 'docs/');
+          const targetPath = args.path || '.';
+          const files = await listDocFiles(process.cwd(), targetPath);
           result = files.join('\n');
-          logToolEvent({ type: 'readFolder', target: args.path || 'docs/', status: 'ok', message: `Found ${files.length} files` });
+          logToolEvent({ type: 'readFolder', target: targetPath, status: 'ok', message: `Found ${files.length} files` });
         } else if (fnName === 'search_files') {
           const matches = await searchFiles(process.cwd(), args.pattern);
           result = JSON.stringify(matches, null, 2);

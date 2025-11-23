@@ -27,5 +27,8 @@ Thumbs.db
 # Logs
 *.log
 
+# Docs
+docs/
+
 EOF
 GEMINI.md
