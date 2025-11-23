@@ -9,23 +9,65 @@ import { REPL_TOOLS } from './tools/definitions';
 import { handleToolCall } from './tools/handlers';
 import { generateSystemPrompt } from '../core/prompts';
 import { handleInvestigateCommand } from './commands';
+import { runInitFlow } from './onboarding';
 
 export async function startRepl() {
   console.log(chalk.bold('pmx – Product CLI'));
   console.log(chalk.dim('Project: PMCLI (...)'));
   console.log(chalk.dim('Type /help for commands, /quit to exit.'));
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: chalk.blue('pmx> '),
-    terminal: true
-  });
-
   try {
+    // Check for first run
+    const hasPmx = fs.existsSync(path.join(process.cwd(), 'PMX.md'));
+    if (!hasPmx) {
+      await runInitFlow();
+    }
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: chalk.blue('pmx> '),
+      terminal: true
+    });
+
     const llm = createDefaultLLMClient();
     const projectContext = await buildProjectContext(process.cwd());
     const systemPrompt = generateSystemPrompt(projectContext);
+
+    // Dashboard / HUD
+    console.clear();
+    console.log(chalk.bold.cyan('╭──────────────────────────────────────────────────────╮'));
+    console.log(chalk.bold.cyan('│  pmx – Product Co-pilot                       v0.1   │'));
+    console.log(chalk.bold.cyan('╰──────────────────────────────────────────────────────╯'));
+    
+    if (projectContext.sources.length > 0) {
+      const pmxFile = projectContext.sources.find(s => s.path === 'PMX.md');
+      if (pmxFile) {
+        const visionMatch = pmxFile.content.match(/## Vision\r?\n(.*)/);
+        const vision = visionMatch ? visionMatch[1].trim() : 'No vision set';
+        console.log(`   Project:  ${chalk.bold(path.basename(process.cwd()))}`);
+        console.log(`   Vision:   "${chalk.italic(vision)}"`);
+      }
+      console.log(chalk.dim(`\n   [i] Context loaded: ${projectContext.sources.length} files`));
+      
+      // Smart Suggestions
+      let suggestion = "Type /help to see what I can do.";
+      const hasFeatures = fs.existsSync(path.join(process.cwd(), 'docs/features')) && 
+                          fs.readdirSync(path.join(process.cwd(), 'docs/features')).length > 0;
+                          
+      if (projectContext.sources.length < 2) {
+         suggestion = "Try /investigate to map out more of your codebase.";
+      } else if (!hasFeatures) {
+         suggestion = "Ask me to 'Plan a new feature' to start building.";
+      }
+      
+      console.log(chalk.yellow(`\n   💡 Tip: ${suggestion}`));
+
+    } else {
+      console.log(chalk.yellow('\n   [!] No context loaded.'));
+    }
+    
+    console.log(''); // Spacer
 
     const messages: LLMMessage[] = [
       {

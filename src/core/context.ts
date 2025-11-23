@@ -5,6 +5,7 @@ export interface ProjectContext {
   summary: string;        // The combined project context as plain text
   sources: Array<{
     path: string;         // file path, e.g. "PMX.md" or "docs/product-vision.md"
+    content: string;      // full file content
     preview: string;      // first ~N chars of the file, for /context display
   }>;
 }
@@ -89,6 +90,7 @@ export async function buildProjectContext(cwd: string): Promise<ProjectContext> 
       
       sources.push({
         path: relativePath,
+        content,
         preview
       });
 
