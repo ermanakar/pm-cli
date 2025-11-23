@@ -5,6 +5,9 @@ import chalk from 'chalk';
 import prompts from 'prompts';
 import { listDocFiles, readDocFile } from '../core/fsTools';
 import { createDefaultLLMClient } from '../core/llm';
+import { saveGlobalConfig } from '../core/config';
+import { runFeatureFlow } from '../core/scribe/engine';
+import { runInvestigation } from '../core/investigator/engine';
 
 export async function runInitFlow(): Promise<void> {
   console.log(chalk.bold.cyan('\n🚀  Welcome to pmx! Let\'s onboard your project.\n'));
@@ -14,138 +17,186 @@ export async function runInitFlow(): Promise<void> {
   try {
     llm = createDefaultLLMClient();
   } catch (e) {
-    console.log(chalk.yellow('Warning: No LLM client available (check OPENAI_API_KEY). Falling back to basic mode.'));
+    console.log(chalk.yellow('\n⚠️  No OpenAI API Key found.'));
+    console.log(chalk.dim('pmx requires an API key to generate plans and analyze code.'));
+    
+    const { apiKey } = await prompts({
+      type: 'password',
+      name: 'apiKey',
+      message: 'Enter your OpenAI API Key (sk-...):',
+    });
+
+    if (apiKey) {
+      saveGlobalConfig({ openaiApiKey: apiKey });
+      console.log(chalk.green('✓ Saved API key to global config.'));
+      
+      // Try again
+      try {
+        llm = createDefaultLLMClient();
+      } catch (e2) {
+         console.log(chalk.red('Still could not initialize LLM client. Proceeding in basic mode.'));
+      }
+    } else {
+       console.log(chalk.yellow('Skipping AI setup. Falling back to basic mode.'));
+    }
   }
 
   // 1. Deep Scan & Context Gathering
   console.log(chalk.blue('🔍  Scanning project structure...'));
-  const stack = await detectStack();
-  const context = await gatherInitialContext();
   
-  console.log(chalk.green(`✓  Analyzed project structure`));
-  if (stack.length) console.log(chalk.green(`✓  Detected stack: ${chalk.bold(stack.join(', '))}`));
+  let context = '';
+  let stack: string[] = [];
+  let productProfile = {
+    oneLiner: "A new project",
+    targetAudience: "Users",
+    suggestedNextSteps: [] as string[]
+  };
 
-  let questions = [
-    "What is the core value proposition of this project?",
-    "Who is your ideal customer?",
-    "What is the most critical feature to build next?"
-  ];
-
-  // 2. Generate Dynamic Questions (if LLM available)
   if (llm) {
-    console.log(chalk.blue('\n🤔  Formulating questions for you...'));
+    console.log(chalk.dim('    Running deep investigation (this may take 30-60s)...'));
     try {
-      const analysisPrompt = `
-        You are an expert Product Manager joining a new team.
-        
-        Project Context:
-        ${context}
-        
-        Detected Stack: ${stack.join(', ')}
-        
-        Your goal is to create a "Product Master Plan" (PMX.md).
-        Based on the code and context above, generate 3 specific, high-value questions for the founder.
-        Do not ask generic questions if the code already answers them.
-        Focus on:
-        1. The "Why" (Vision)
-        2. The "Who" (Target User) - if not obvious
-        3. The "What's Next" (Immediate priorities)
-        
-        Return ONLY a JSON array of strings. Example: ["Question 1?", "Question 2?"]
-        Keep questions concise (max 15 words) to avoid terminal wrapping issues.
+      const investigation = await runInvestigation({
+        text: "Perform a comprehensive analysis of this project. Identify the tech stack, core functionality, folder structure, and business purpose. Read key source files to understand the implementation."
+      }, {
+        maxTurns: 8, // Give it enough turns to explore
+        maxTimeMs: 60 * 1000
+      });
+
+      context = `
+Investigation Summary:
+${investigation.summary}
+
+Investigation Details:
+${investigation.details}
+
+Evidence Collected:
+${investigation.evidence.map(e => `- ${e.path}`).join('\n')}
       `;
 
-      const response = await llm.chat([{ role: 'user', content: analysisPrompt }]);
-      const jsonStr = response.content?.match(/\[.*\]/s)?.[0];
+      console.log(chalk.green(`✓  Deep analysis complete.`));
+      
+      // 2. The "Magic Mirror" - Generate Product Profile
+      console.log(chalk.blue('\n🧠  Synthesizing Product Identity...'));
+      
+      const profilePrompt = `
+        You are a Product Visionary.
+        Based on the investigation below, create a "Product Identity Card" for this project.
+        
+        INVESTIGATION:
+        ${context}
+        
+        Return a JSON object with:
+        - "oneLiner": A punchy, 1-sentence description of what this product IS (e.g. "A SaaS boilerplate for dog walkers").
+        - "targetAudience": Who is this for? (e.g. "Solo founders building MVPs").
+        - "suggestedNextSteps": An array of 3 specific, high-impact features or tasks the user should build NEXT. 
+           (e.g. "Add Stripe Subscription", "Create User Dashboard", "Setup CI/CD").
+           Do not suggest things that are already built.
+      `;
+
+      const response = await llm.chat([{ role: 'user', content: profilePrompt }]);
+      const jsonStr = response.content?.match(/\{[\s\S]*\}/)?.[0];
       if (jsonStr) {
-        questions = JSON.parse(jsonStr);
-        // Ensure questions are strings and not too long
-        questions = questions.map(q => String(q).trim());
+        productProfile = JSON.parse(jsonStr);
       }
+
     } catch (e) {
-      // Fallback to default questions
+      console.log(chalk.yellow(`Deep investigation failed: ${(e as Error).message}`));
+      console.log(chalk.dim('Falling back to shallow scan.'));
+      stack = await detectStack();
+      context = await gatherInitialContext();
+
+      // Attempt to generate profile from shallow context if LLM is available
+      if (llm && context) {
+        console.log(chalk.dim('    Attempting to generate profile from shallow context...'));
+        try {
+           const profilePrompt = `
+             You are a Product Visionary.
+             Based on the shallow context below, create a "Product Identity Card" for this project.
+             
+             CONTEXT:
+             ${context}
+             
+             Return a JSON object with:
+             - "oneLiner": A punchy, 1-sentence description.
+             - "targetAudience": Who is this for?
+             - "suggestedNextSteps": 3 specific next steps.
+           `;
+           const response = await llm.chat([{ role: 'user', content: profilePrompt }]);
+           const jsonStr = response.content?.match(/\{[\s\S]*\}/)?.[0];
+           if (jsonStr) {
+             productProfile = JSON.parse(jsonStr);
+           }
+        } catch (e2) {
+           // Ignore
+        }
+     }
+    }
+  } else {
+    stack = await detectStack();
+    context = await gatherInitialContext();
+  }
+  
+  // 3. The Reveal & Confirmation
+  console.log(chalk.bold('\n✨  Here is what I see:'));
+  console.log(chalk.dim('──────────────────────────────────────────────────'));
+  console.log(`${chalk.bold('Product:')}  ${productProfile.oneLiner}`);
+  console.log(`${chalk.bold('For:')}      ${productProfile.targetAudience}`);
+  console.log(chalk.dim('──────────────────────────────────────────────────'));
+
+  const confirm = await prompts({
+    type: 'confirm',
+    name: 'value',
+    message: 'Does this sound right?',
+    initial: true
+  });
+
+  if (!confirm.value) {
+    // Allow manual override if AI got it wrong
+    const corrections = await prompts([
+      { type: 'text', name: 'oneLiner', message: 'What is the one-liner?' },
+      { type: 'text', name: 'targetAudience', message: 'Who is the target audience?' }
+    ]);
+    if (corrections.oneLiner) productProfile.oneLiner = corrections.oneLiner;
+    if (corrections.targetAudience) productProfile.targetAudience = corrections.targetAudience;
+  }
+
+  // 4. Generate PMX.md immediately
+  console.log(chalk.blue('\n📝  Generating Product Master Plan (PMX.md)...'));
+  const pmxContent = `# ${productProfile.oneLiner}\n\n## Vision\n${productProfile.oneLiner}\n\n## Target Audience\n${productProfile.targetAudience}\n\n## Context\n${context}`;
+  await writeDirectly('PMX.md', pmxContent);
+  await createDocsFolder();
+  console.log(chalk.green('✓  PMX.md created.'));
+
+  // 5. The Kickstart - Pick a feature to build NOW
+  if (productProfile.suggestedNextSteps.length > 0) {
+    console.log(chalk.bold('\n🚀  Let\'s get to work. Which of these should we tackle first?'));
+    
+    const choice = await prompts({
+      type: 'select',
+      name: 'feature',
+      message: 'Select a feature to plan:',
+      choices: [
+        ...productProfile.suggestedNextSteps.map(s => ({ title: s, value: s })),
+        { title: 'None (I will choose later)', value: 'none' }
+      ]
+    });
+
+    if (choice.feature && choice.feature !== 'none') {
+      console.log(chalk.cyan(`\n⚡️  Drafting spec for: "${choice.feature}"...`));
+      try {
+        const result = await runFeatureFlow(
+          { title: choice.feature, description: "Drafted during onboarding kickstart." },
+          { maxTurns: 8 }
+        );
+        console.log(chalk.green(`\n✓  Spec created at ${result.path}`));
+        console.log(chalk.dim('   You can edit this file or run /plan to refine it.'));
+      } catch (e) {
+        console.log(chalk.red('Failed to draft spec: ' + (e as Error).message));
+      }
     }
   }
 
-  // 3. Interview
-  console.log(chalk.dim('\nPlease answer the following to set the product direction:\n'));
-  
-  const answers: Record<string, string> = {};
-  let qIndex = 1;
-
-  for (const q of questions) {
-    console.log(chalk.bold.cyan(`\n❓ Question ${qIndex}/${questions.length}:`));
-    console.log(chalk.bold(q));
-    
-    const { answer } = await prompts({
-      type: 'text',
-      name: 'answer',
-      message: '>',
-      onState: (state) => {
-        if (state.aborted) {
-          process.exit(0);
-        }
-      }
-    });
-    
-    if (!answer) continue;
-    answers[q] = answer;
-    qIndex++;
-  }
-
-  // 4. Generation
-  console.log(chalk.blue('\n🧠  Synthesizing Product Master Plan...'));
-  
-  let pmxContent = '';
-  
-  if (llm) {
-    const generationPrompt = `
-      Generate a comprehensive "PMX.md" file (Markdown) for this project.
-      
-      Context:
-      ${context}
-      
-      Founder Interview:
-      ${Object.entries(answers).map(([q, a]) => `Q: ${q}\nA: ${a}`).join('\n\n')}
-      
-      The file should be professional, inspiring, and practical.
-      Structure:
-      # [Project Name] - Product Master Plan
-      
-      ## 1. Vision & Core Value
-      (Synthesize the vision)
-      
-      ## 2. Target Audience
-      (Who are we building for?)
-      
-      ## 3. Technical Foundation
-      (Briefly summarize the stack and architecture based on your analysis)
-      
-      ## 4. Current Status & Context
-      (What is the state of the project?)
-      
-      ## 5. Roadmap
-      ### Immediate Focus
-      (Actionable next steps)
-      ### Future Horizons
-      (Longer term ideas)
-      
-      Return ONLY the markdown content.
-    `;
-
-    const pmxResponse = await llm.chat([{ role: 'user', content: generationPrompt }]);
-    pmxContent = pmxResponse.content || '';
-  } else {
-    // Fallback template
-    pmxContent = `# Project Context\n\n## Vision\n${Object.values(answers).join('\n\n')}`;
-  }
-
-  await writeDirectly('PMX.md', pmxContent);
-  await createDocsFolder();
-
   console.log(chalk.bold.green('\n✨  Onboarding complete!'));
-  console.log(chalk.dim('I have created PMX.md with a synthesized product strategy.'));
-  
   showTutorial();
 }
 
@@ -191,7 +242,7 @@ async function gatherInitialContext(): Promise<string> {
 
   // List top-level files
   try {
-    const files = await listDocFiles(cwd, '.');
+    const files = await listDocFiles(cwd, '.', false);
     context += `\n--- Root Files ---\n${files.join('\n')}\n`;
   } catch {}
 
@@ -200,7 +251,7 @@ async function gatherInitialContext(): Promise<string> {
 
 async function detectStack(): Promise<string[]> {
   const stack: string[] = [];
-  const rootFiles = await listDocFiles(process.cwd(), '.');
+  const rootFiles = await listDocFiles(process.cwd(), '.', false);
   
   if (rootFiles.includes('package.json')) {
     try {

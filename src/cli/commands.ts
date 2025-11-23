@@ -1,11 +1,54 @@
 import * as readline from 'readline';
 import chalk from 'chalk';
-import * as inquirer from 'inquirer';
+import prompts from 'prompts';
 import { runInvestigation } from '../core/investigator/engine';
 import { runFeatureFlow } from '../core/scribe/engine';
 import { prepareDocWrite, applyPendingWrite } from '../core/fsTools';
 import { logToolEvent, promptForWriteConfirmation } from './ui';
 import { LLMMessage } from '../core/llm';
+import { saveGlobalConfig, loadPMXConfig } from '../core/config';
+
+export async function handleConfigCommand(
+  args: string[],
+  rl: readline.Interface
+): Promise<void> {
+  const [action, key, value] = args;
+
+  if (!action || action === 'list') {
+    const config = loadPMXConfig();
+    
+    // Mask API key for display
+    const displayConfig = { ...config };
+    if (displayConfig.openaiApiKey) {
+      displayConfig.openaiApiKey = displayConfig.openaiApiKey.slice(0, 3) + '...' + displayConfig.openaiApiKey.slice(-4);
+    }
+
+    console.log(chalk.bold('\n⚙️  Current Configuration:'));
+    console.log(JSON.stringify(displayConfig, null, 2));
+    console.log('');
+    return;
+  }
+
+  if (action === 'set') {
+    if (!key || !value) {
+      console.log(chalk.yellow('Usage: /config set <key> <value>'));
+      return;
+    }
+
+    if (key === 'model') {
+      saveGlobalConfig({ model: value });
+      console.log(chalk.green(`✓ Updated model to: ${value}`));
+    } else if (key === 'openaiApiKey') {
+      saveGlobalConfig({ openaiApiKey: value });
+      console.log(chalk.green(`✓ Updated OpenAI API Key`));
+    } else {
+      console.log(chalk.yellow(`Unknown config key: ${key}`));
+    }
+    return;
+  }
+
+  console.log(chalk.yellow('Usage: /config [list|set <key> <value>]'));
+}
 
 export async function handleInvestigateCommand(
   args: string[], 
@@ -35,12 +78,12 @@ export async function handleInvestigateCommand(
     console.log('\n' + chalk.dim('─'.repeat(40)) + '\n');
     console.log(result.details);
     
-    const saveAnswer = await inquirer.prompt([{
+    const saveAnswer = await prompts({
       type: 'confirm',
       name: 'save',
       message: 'Save this report to docs/investigations/?',
-      default: false
-    }]);
+      initial: false
+    });
 
     if (saveAnswer.save) {
       const slug = objectiveText.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50);

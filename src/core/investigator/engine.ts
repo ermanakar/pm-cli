@@ -22,11 +22,13 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'list_files',
-      description: 'List files in a directory. Use "." to list everything from root, or "src/" for source code.',
+      description: 'List files in a directory. Use "." to list root. By default it is shallow (non-recursive) to save tokens. Set recursive=true only if needed.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'The directory path (default: .)' }
+          path: { type: 'string', description: 'The directory path (default: .)' },
+          recursive: { type: 'boolean', description: 'Whether to list recursively (default: false)' },
+          depth: { type: 'number', description: 'Max depth for recursion (default: 2)' }
         },
         required: ['path']
       }
@@ -89,13 +91,14 @@ Your goal is to answer the user's objective by exploring the codebase.
 OBJECTIVE: "${objective.text}"
 
 GUIDELINES:
-1. Use 'list_files' to explore structure.
-2. Use 'search_files' to find keywords.
-3. Use 'read_file' to examine relevant code.
-4. Accumulate evidence.
-5. When you have enough information, call 'submit_report'.
-6. Do not hallucinate files. Only use what you see.
-7. Be efficient. You have a limited number of turns.
+1. Start by listing files in root ('.') to understand the structure.
+2. Explore interesting directories one by one. Do NOT list the entire drive recursively at once.
+3. Use 'search_files' to find keywords.
+4. Use 'read_file' to examine relevant code.
+5. Accumulate evidence.
+6. When you have enough information, call 'submit_report'.
+7. Do not hallucinate files. Only use what you see.
+8. Be efficient. You have a limited number of turns.
 
 You cannot modify files. You are read-only.
 `;
@@ -156,8 +159,18 @@ You cannot modify files. You are read-only.
           logToolEvent({ type: 'readFile', target: args.path, status: 'ok', preview: doc.preview });
         } else if (fnName === 'list_files') {
           const targetPath = args.path || '.';
-          const files = await listDocFiles(process.cwd(), targetPath);
-          result = files.join('\n');
+          const recursive = args.recursive || false;
+          const depth = args.depth || 2;
+          
+          const files = await listDocFiles(process.cwd(), targetPath, recursive, depth);
+          
+          // Truncate if too many files
+          let fileList = files.join('\n');
+          if (files.length > 100) {
+            fileList = files.slice(0, 100).join('\n') + `\n... (${files.length - 100} more files)`;
+          }
+          
+          result = fileList;
           logToolEvent({ type: 'readFolder', target: targetPath, status: 'ok', message: `Found ${files.length} files` });
         } else if (fnName === 'search_files') {
           const matches = await searchFiles(process.cwd(), args.pattern);

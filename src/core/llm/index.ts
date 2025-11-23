@@ -20,12 +20,12 @@ export interface LLMResponse {
 }
 
 export function createDefaultLLMClient(): LLMClient {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set in the environment.");
-  }
-  
   const config = loadPMXConfig();
+  const apiKey = process.env.OPENAI_API_KEY || config.openaiApiKey;
+  
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not set in the environment or global config.");
+  }
 
   return new OpenAILLMClient({
     apiKey,

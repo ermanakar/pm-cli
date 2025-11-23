@@ -32,16 +32,19 @@ export interface SearchResult {
 // --- Constants ---
 
 const ALLOWED_WRITE_PREFIXES = ['docs/', '.pmx/'];
-const ALLOWED_READ_PREFIXES = [
-  'docs/', 
-  '.pmx/', 
-  'src/', 
-  'package.json', 
-  'README.md', 
-  'tsconfig.json', 
-  'PMX.md', 
-  'GEMINI.md'
+
+// We now use a blocklist for reading to support "Read Anything"
+const BLOCKED_READ_PREFIXES = [
+  '.git/',
+  'node_modules/',
+  '.env',
+  '.DS_Store',
+  'dist/',
+  'build/',
+  '.next/',
+  'coverage/'
 ];
+
 const PREVIEW_LENGTH = 200;
 
 // --- Helper Functions ---
@@ -50,18 +53,29 @@ function normalizePath(projectRoot: string, relativePath: string, operation: 're
   // Ensure path is relative and clean
   const cleanRelative = path.normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, '');
   
-  const allowedList = operation === 'write' ? ALLOWED_WRITE_PREFIXES : ALLOWED_READ_PREFIXES;
-  
-  const isAllowed = allowedList.some(prefix => {
-    if (prefix.endsWith('/')) {
-      return cleanRelative.startsWith(prefix) || cleanRelative === prefix.slice(0, -1);
-    }
-    return cleanRelative === prefix;
-  });
+  if (operation === 'write') {
+    const isAllowed = ALLOWED_WRITE_PREFIXES.some(prefix => {
+      if (prefix.endsWith('/')) {
+        return cleanRelative.startsWith(prefix) || cleanRelative === prefix.slice(0, -1);
+      }
+      return cleanRelative === prefix;
+    });
 
-  if (!isAllowed) {
-    const action = operation === 'write' ? 'write to' : 'read from';
-    throw new Error(`Access denied: Cannot ${action} '${cleanRelative}'. Allowed paths: ${allowedList.join(', ')}`);
+    if (!isAllowed) {
+      throw new Error(`Access denied: Cannot write to '${cleanRelative}'. Allowed paths: ${ALLOWED_WRITE_PREFIXES.join(', ')}`);
+    }
+  } else {
+    // Read operation: Check blocklist
+    const isBlocked = BLOCKED_READ_PREFIXES.some(prefix => {
+      if (prefix.endsWith('/')) {
+        return cleanRelative.startsWith(prefix) || cleanRelative === prefix.slice(0, -1);
+      }
+      return cleanRelative === prefix;
+    });
+
+    if (isBlocked) {
+      throw new Error(`Access denied: Cannot read from blocked path '${cleanRelative}'.`);
+    }
   }
 
   return {
@@ -75,8 +89,15 @@ function normalizePath(projectRoot: string, relativePath: string, operation: 're
 
 /**
  * List files in the project (read-only).
+ * @param recursive If false, only lists immediate children.
+ * @param depth Max recursion depth (default: infinity).
  */
-export async function listDocFiles(projectRoot: string, prefix: string = 'docs/'): Promise<string[]> {
+export async function listDocFiles(
+  projectRoot: string, 
+  prefix: string = 'docs/', 
+  recursive: boolean = true,
+  depth: number = 10
+): Promise<string[]> {
   const results: string[] = [];
   
   let cleanPrefix = path.normalize(prefix).replace(/^(\.\.(\/|\\|$))+/, '');
@@ -90,37 +111,38 @@ export async function listDocFiles(projectRoot: string, prefix: string = 'docs/'
     return []; 
   }
 
-  async function scan(dir: string) {
+  async function scan(dir: string, currentDepth: number) {
+    if (currentDepth > depth) return;
+
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       const relPath = path.relative(projectRoot, fullPath);
       
+      // Check blocklist
+      const isBlocked = BLOCKED_READ_PREFIXES.some(prefix => {
+        if (prefix.endsWith('/')) {
+          return relPath.startsWith(prefix) || relPath === prefix.slice(0, -1) || prefix.startsWith(relPath + '/');
+        }
+        return relPath === prefix;
+      });
+
+      if (isBlocked) continue;
+
       if (entry.isDirectory()) {
-         // Only recurse if this directory is within an allowed tree.
-         const isDirAllowed = ALLOWED_READ_PREFIXES.some(p => {
-            return (p.endsWith('/') && (relPath.startsWith(p) || relPath === p.slice(0, -1) || p.startsWith(relPath + '/')));
-         });
-         
-         if (isDirAllowed) {
-            await scan(fullPath);
+         if (recursive) {
+            await scan(fullPath, currentDepth + 1);
+         } else {
+            // If not recursive, we still want to indicate it's a folder
+            results.push(relPath + '/');
          }
       } else if (entry.isFile()) {
-         const isFileAllowed = ALLOWED_READ_PREFIXES.some(p => {
-            if (p.endsWith('/')) {
-               return relPath.startsWith(p);
-            }
-            return relPath === p;
-         });
-         
-         if (isFileAllowed) {
-            results.push(relPath);
-         }
+         results.push(relPath);
       }
     }
   }
 
-  await scan(startDir);
+  await scan(startDir, 0);
   return results;
 }
 

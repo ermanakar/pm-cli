@@ -2,13 +2,12 @@ import * as readline from 'readline';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
-import * as inquirer from 'inquirer';
 import { createDefaultLLMClient, LLMMessage } from '../core/llm';
 import { buildProjectContext } from '../core/context';
 import { REPL_TOOLS } from './tools/definitions';
 import { handleToolCall } from './tools/handlers';
 import { generateSystemPrompt } from '../core/prompts';
-import { handleInvestigateCommand, handleFeatureCommand } from './commands';
+import { handleInvestigateCommand, handleFeatureCommand, handleConfigCommand } from './commands';
 import { runInitFlow } from './onboarding';
 
 export async function startRepl() {
@@ -127,6 +126,8 @@ export async function startRepl() {
             console.log(chalk.dim('                 Usage: /investigate <path> <question>'));
             console.log(`  ${chalk.cyan('/plan')}         Draft a new feature spec or PRD`);
             console.log(chalk.dim('                 Usage: /plan <feature description>'));
+            console.log(`  ${chalk.cyan('/config')}       Manage global settings`);
+            console.log(chalk.dim('                 Usage: /config [list|set <key> <value>]'));
 
             console.log(chalk.bold('\nNatural Language Examples:'));
             console.log(`  • "Plan the user authentication feature"`);
@@ -163,6 +164,10 @@ export async function startRepl() {
           case '/plan':
           case '/feature':
             await handleFeatureCommand(args, rl, messages);
+            break;
+
+          case '/config':
+            await handleConfigCommand(args, rl);
             break;
             
           default:

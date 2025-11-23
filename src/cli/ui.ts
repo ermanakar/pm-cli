@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import * as inquirer from 'inquirer';
+import prompts from 'prompts';
 import { PendingWrite, WriteStatus } from '../core/fsTools';
 
 export type ToolEventType = 'readFile' | 'writeFile' | 'readFolder' | 'shell';
@@ -91,6 +91,32 @@ export function logToolEvent(event: ToolEvent) {
 }
 
 /**
+ * Displays the established project identity/context.
+ */
+export function logContextSummary(summary: string) {
+  const width = 80;
+  const borderChar = '═';
+  const topBorder = `╔${borderChar.repeat(width)}╗`;
+  const bottomBorder = `╚${borderChar.repeat(width)}╝`;
+  
+  console.log(chalk.cyan(topBorder));
+  console.log(chalk.cyan(`║ 🧠  PROJECT IDENTITY ESTABLISHED${' '.repeat(width - 30)}║`));
+  console.log(chalk.cyan(`╟${'─'.repeat(width)}╢`));
+  
+  const lines = summary.split('\n');
+  for (const line of lines) {
+    // Simple wrapping/truncation
+    let remaining = line;
+    while (remaining.length > 0) {
+      const chunk = remaining.slice(0, width - 4);
+      remaining = remaining.slice(width - 4);
+      console.log(chalk.cyan(`║ `) + chalk.white(chunk.padEnd(width - 2)) + chalk.cyan(` ║`));
+    }
+  }
+  console.log(chalk.cyan(bottomBorder));
+}
+
+/**
  * Interactive menu for confirming a write operation.
  */
 export async function promptForWriteConfirmation(pending: PendingWrite): Promise<WriteStatus> {
@@ -106,19 +132,17 @@ export async function promptForWriteConfirmation(pending: PendingWrite): Promise
   console.log(chalk.bold('\nApply this change?'));
 
   while (true) {
-    const answer = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'choice',
-        message: 'Select an action:',
-        choices: [
-          { name: 'Yes, allow once', value: 'approved' },
-          // { name: 'Yes, allow always', value: 'always' }, // Future feature
-          { name: 'Show full content', value: 'show' },
-          { name: 'No, cancel', value: 'rejected' }
-        ]
-      }
-    ]);
+    const answer = await prompts({
+      type: 'select',
+      name: 'choice',
+      message: 'Select an action:',
+      choices: [
+        { title: 'Yes, allow once', value: 'approved' },
+        // { title: 'Yes, allow always', value: 'always' }, // Future feature
+        { title: 'Show full content', value: 'show' },
+        { title: 'No, cancel', value: 'rejected' }
+      ]
+    });
 
     if (answer.choice === 'show') {
       console.log(chalk.gray('--- Full Content Start ---'));
