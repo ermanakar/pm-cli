@@ -10,19 +10,19 @@ export interface ChatMessage {
 
 export class LLMService {
     private openai: OpenAI | null = null;
-    private model: string = 'gpt-4-turbo-preview'; // Default to a good model
+    private model: string = 'gpt-5-mini-2025-08-07'; // Default to a good model
 
     constructor(apiKey?: string) {
         const key = apiKey || process.env.OPENAI_API_KEY;
         if (key) {
-            this.openai = new OpenAI({ apiKey: key });
+            this.openai = new OpenAI({ apiKey: key, timeout: 60000 }); // 60s timeout
         } else {
             // Don't warn here, let the UI handle it
         }
     }
 
     setApiKey(apiKey: string) {
-        this.openai = new OpenAI({ apiKey });
+        this.openai = new OpenAI({ apiKey, timeout: 60000 });
     }
 
     isReady(): boolean {

@@ -116,8 +116,8 @@ export const Chat: React.FC = () => {
 
                 if (command === '/init') {
                     setStreamingContent('Initializing Deep Scan...');
-                    await onboardingService.runDeepScan((status) => setStreamingContent(status));
-                    systemResponse = 'Deep Scan complete. Project context initialized.';
+                    const summary = await onboardingService.runDeepScan((status) => setStreamingContent(status));
+                    systemResponse = `Deep Scan complete. Project context initialized.\n\n${summary}`;
                 } else if (command === '/investigate') {
                     const input = args.join(' ') || process.cwd();
                     setStreamingContent('Investigating...');
@@ -173,8 +173,41 @@ export const Chat: React.FC = () => {
         }
     };
 
+    const WelcomeScreen = () => (
+        <Box flexDirection="column" padding={1} borderStyle="round" borderColor="cyan">
+            <Text color="cyan" bold>
+                {`
+  ██████╗ ███╗   ███╗██╗  ██╗
+  ██╔══██╗████╗ ████║╚██╗██╔╝
+  ██████╔╝██╔████╔██║ ╚███╔╝ 
+  ██╔═══╝ ██║╚██╔╝██║ ██╔██╗ 
+  ██║     ██║ ╚═╝ ██║██╔╝ ██╗
+  ╚═╝     ╚═╝     ╚═╝╚═╝  ╚═╝
+`}
+            </Text>
+            <Text bold>Product Management Extended (PMX) CLI</Text>
+            <Text color="gray">Your AI-powered Product Engineering Partner</Text>
+
+            <Box flexDirection="column" marginTop={1}>
+                <Text bold underline>Available Commands:</Text>
+                <Box marginLeft={2}>
+                    <Text><Text color="green" bold>/init</Text>        - Deep Scan & Initialize Project Context</Text>
+                    <Text><Text color="green" bold>/investigate</Text> - Agentic Codebase Exploration</Text>
+                    <Text><Text color="green" bold>/read</Text>        - Read specific file context</Text>
+                    <Text><Text color="green" bold>/scribe</Text>      - Generate documentation artifacts</Text>
+                </Box>
+            </Box>
+
+            <Box marginTop={1} borderStyle="single" borderColor="yellow" paddingX={1}>
+                <Text color="yellow">⚠️  TIP: Run <Text bold>/init</Text> first to generate your PMX.md profile!</Text>
+            </Box>
+        </Box>
+    );
+
     return (
         <Box flexDirection="column" padding={1}>
+            {history.length === 0 && !isLoading && <WelcomeScreen />}
+
             {history.map((msg, index) => (
                 <Box key={index} flexDirection="column" marginBottom={1}>
                     <Text color={msg.role === 'user' ? 'blue' : 'green'} bold>

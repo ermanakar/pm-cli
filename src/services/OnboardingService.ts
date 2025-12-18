@@ -1,3 +1,4 @@
+import chalk from 'chalk';
 import { InvestigatorAgent } from './InvestigatorAgent.js';
 import { ContextService } from './ContextService.js';
 import { FileSystemService } from './FileSystemService.js';
@@ -11,17 +12,18 @@ export class OnboardingService {
         private llm: LLMService
     ) { }
 
-    async runDeepScan(onUpdate?: (status: string) => void): Promise<void> {
+    async runDeepScan(onUpdate?: (status: string) => void): Promise<string> {
         onUpdate?.('Starting Deep Scan (Phase 1/2): Analyzing Codebase...');
 
         // Phase 1: Deep Scan (Agent)
         const investigationObjective = `
       Analyze this project to understand its core purpose, technology stack, and business domain.
       
-      1. READ 'package.json' for dependencies (Frameworks, DB, UI libs).
-      2. SCAN for database schemas (prisma, mongoose) to understand the data model.
-      3. CHECK routes/controllers to infer key features (e.g. "Auth", "Payments", "Dashboard").
-      4. IDENTIFY the business domain (e.g. "E-commerce", "DevTool", "Healthcare").
+      1. READ 'package.json' (Node) OR 'Podfile'/'Package.swift' (iOS) for dependencies.
+      2. SCAN for database schemas (prisma, mongoose, CoreData, SwiftData).
+      3. CHECK routes/controllers (Web) OR Views/ViewModels (iOS/SwiftUI) to infer key features.
+      4. LOOK for 'Info.plist' or 'App.tsx' entry points.
+      5. IDENTIFY the business domain (e.g. "E-commerce", "DevTool", "Healthcare").
       
       GOAL: Extract the "Soul" of the product. What is it? Who is it for? How is it built?
       
@@ -88,11 +90,36 @@ ${data.context}
 `;
                 await this.fileSystem.writeFile('PMX.md', pmxContent);
                 onUpdate?.('Deep Scan complete. PMX.md created.');
+
+                // Return a distilled "Senior Product Strategist" summary for the UI
+                const strategistSummary = [
+                    '',
+                    chalk.hex('#FFD700').bold('🎯 STRATEGIC BRIEF'),
+                    chalk.gray('────────────────────────────────────────────────────────────'),
+                    '',
+                    chalk.bold.cyan('VISION'),
+                    ` ${data.oneLiner}`,
+                    '',
+                    chalk.bold.cyan('MARKET'),
+                    ` ${chalk.gray('Domain:')}   ${data.domain}`,
+                    ` ${chalk.gray('Audience:')} ${data.targetAudience}`,
+                    '',
+                    chalk.bold.cyan('CAPABILITIES'),
+                    (data.features || []).map((f: string) => ` ${chalk.green('•')} ${f}`).join('\n'),
+                    '',
+                    chalk.gray('────────────────────────────────────────────────────────────'),
+                    chalk.dim.italic(' Full context saved to PMX.md'),
+                    ''
+                ].join('\n');
+
+                return strategistSummary;
             } catch (e) {
                 onUpdate?.('Failed to parse Product Identity.');
+                return "Deep Scan completed, but failed to parse structured identity.";
             }
         } else {
             onUpdate?.('Failed to generate structured Product Identity.');
+            return "Deep Scan completed, but failed to generate structured identity.";
         }
     }
 }
