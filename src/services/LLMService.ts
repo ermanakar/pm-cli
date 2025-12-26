@@ -10,7 +10,7 @@ export interface ChatMessage {
 
 export class LLMService {
     private openai: OpenAI | null = null;
-    private model: string = 'gpt-5-mini-2025-08-07'; // Default to a good model
+    private model: string = 'gpt-5.2-2025-12-11'; // Default to a good model
 
     constructor(apiKey?: string) {
         const key = apiKey || process.env.OPENAI_API_KEY;
