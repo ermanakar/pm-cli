@@ -11,7 +11,9 @@ import { InvestigatorService } from './services/InvestigatorService.js';
 import { ScribeService } from './services/ScribeService.js';
 import { ContextService } from './services/ContextService.js';
 import { InvestigatorAgent } from './services/InvestigatorAgent.js';
+
 import { OnboardingService } from './services/OnboardingService.js';
+import { MCPService } from './services/MCPService.js';
 
 // Initialize services
 const safetyService = new SafetyService();
@@ -24,10 +26,13 @@ const configService = new ConfigService(process.cwd(), safetyService);
 const llmService = new LLMService();
 const fileSystemService = new FileSystemService(safetyService);
 const contextService = new ContextService(fileSystemService, configService);
+const mcpService = new MCPService(configService);
 const investigatorService = new InvestigatorService(fileSystemService, llmService, contextService);
 const scribeService = new ScribeService(fileSystemService, llmService);
-const investigatorAgent = new InvestigatorAgent(llmService, fileSystemService, contextService);
+const investigatorAgent = new InvestigatorAgent(llmService, fileSystemService, contextService, mcpService);
 const onboardingService = new OnboardingService(investigatorAgent, contextService, fileSystemService, llmService);
+// Kicking off MCP connections in background
+mcpService.ensureConnections();
 
 const services = {
     safetyService,
@@ -39,6 +44,7 @@ const services = {
     contextService,
     investigatorAgent,
     onboardingService,
+    mcpService,
 };
 
 type View = 'welcome' | 'chat';

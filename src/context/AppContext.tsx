@@ -8,6 +8,7 @@ import { ScribeService } from '../services/ScribeService.js';
 import { ContextService } from '../services/ContextService.js';
 import { InvestigatorAgent } from '../services/InvestigatorAgent.js';
 import { OnboardingService } from '../services/OnboardingService.js';
+import { MCPService } from '../services/MCPService.js';
 
 interface AppContextType {
     configService: ConfigService;
@@ -19,6 +20,7 @@ interface AppContextType {
     contextService: ContextService;
     investigatorAgent: InvestigatorAgent;
     onboardingService: OnboardingService;
+    mcpService: MCPService;
 }
 
 const AppContext = createContext<AppContextType | null>(null);

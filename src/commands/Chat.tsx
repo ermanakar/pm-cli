@@ -7,7 +7,7 @@ import { useServices } from '../context/AppContext.js';
 import { ChatMessage } from '../services/LLMService.js';
 
 export const Chat: React.FC = () => {
-    const { llmService, investigatorService, scribeService, contextService, investigatorAgent, onboardingService, configService } = useServices();
+    const { llmService, investigatorService, scribeService, contextService, investigatorAgent, onboardingService, configService, mcpService } = useServices();
     const { exit } = useApp();
     const [input, setInput] = useState('');
     const [history, setHistory] = useState<ChatMessage[]>([]);
@@ -147,6 +147,106 @@ export const Chat: React.FC = () => {
                         const filename = await scribeService.generateArtifact(type, topic, 'Context from chat history...'); // TODO: Pass better context
                         systemResponse = `Generated artifact: ${filename}`;
                     }
+                } else if (command === '/mcp') {
+                    const subCmd = args[0];
+                    if (subCmd === 'status') {
+                        setStreamingContent('Checking MCP status...');
+                        const status = mcpService.getStatus();
+                        const tools = await mcpService.getTools();
+
+                        let errorSection = '';
+                        if (Object.keys(status.errors).length > 0) {
+                            errorSection = `\n❌ Connection Errors:\n${Object.entries(status.errors).map(([name, err]) => `- ${name}: ${err}`).join('\n')}\n`;
+                        }
+
+                        systemResponse = `🔌 MCP Status:
+Configured Servers: ${status.configured.join(', ') || 'None'}
+Connected Servers: ${status.connected.join(', ') || 'None'}
+${errorSection}
+Tools Available: ${tools.length}
+${tools.length > 0 ? tools.map((t: any) => `- ${t.function.name}`).join('\n') : '(No tools loaded)'}
+`;
+                    } else if (subCmd === 'connect') {
+                        setStreamingContent('Connecting to MCP servers...');
+                        await mcpService.ensureConnections();
+                        const status = mcpService.getStatus();
+                        systemResponse = `Connection attempt complete.\nConnected: ${status.connected.join(', ') || 'None'}\nErrors: ${Object.keys(status.errors).length > 0 ? JSON.stringify(status.errors) : 'None'}`;
+                    } else {
+                        systemResponse = `Usage: /mcp status   - Check connection status
+       /mcp connect  - Retry connections`;
+                    }
+                } else if (command === '/jira') {
+                    const subCmd = args[0];
+                    if (subCmd === 'setup') {
+                        // Interactive setup - we'll collect info step by step
+                        // For now, provide instructions since multi-step input in Ink is complex
+                        systemResponse = `🔧 Jira Setup
+
+To configure Jira integration, I need 3 pieces of information:
+1. Your Atlassian email
+2. Your API token (get one at https://id.atlassian.com/manage-profile/security/api-tokens)
+3. Your Jira instance URL (e.g., https://yourcompany.atlassian.net)
+
+Run the following command with your details:
+/jira configure <email> <api_token> <instance_url>
+
+Example:
+/jira configure john@company.com ATATT3x... https://mycompany.atlassian.net
+`;
+                    } else if (subCmd === 'configure') {
+                        const email = args[1];
+                        const token = args[2];
+                        const instanceUrl = args[3];
+
+                        if (!email || !token || !instanceUrl) {
+                            systemResponse = 'Usage: /jira configure <email> <api_token> <instance_url>';
+                        } else {
+                            setStreamingContent('Saving Jira configuration...');
+                            try {
+                                // Save to project config
+                                const currentConfig = configService.getConfig();
+                                await configService.saveConfig({
+                                    ...currentConfig,
+                                    mcpServers: {
+                                        ...(currentConfig.mcpServers || {}),
+                                        jira: {
+                                            command: 'docker',
+                                            args: [
+                                                'run', '-i', '--rm',
+                                                '-e', `JIRA_URL=${instanceUrl}`,
+                                                '-e', `JIRA_USERNAME=${email}`,
+                                                '-e', `JIRA_API_TOKEN=${token}`,
+                                                'ghcr.io/sooperset/mcp-atlassian:latest'
+                                            ]
+                                        }
+                                    }
+                                });
+
+                                // Force reconnect (disconnect old, connect new)
+                                setStreamingContent('Connecting to Jira MCP server...');
+                                await mcpService.reconnect('jira');
+
+                                const tools = await mcpService.getTools();
+                                const jiraTools = tools.filter((t: any) => t.function.name.startsWith('jira_'));
+
+                                systemResponse = `✅ Jira configured successfully!
+
+Saved to: .pmx/config.json
+Connected Tools: ${jiraTools.length} Jira tools available
+
+You can now ask me things like:
+- "Show me open bugs in project X"
+- "Create a ticket for the login bug"
+- "What are my assigned issues?"
+`;
+                            } catch (error) {
+                                systemResponse = `❌ Failed to configure Jira: ${error}`;
+                            }
+                        }
+                    } else {
+                        systemResponse = `Usage: /jira setup   - Start Jira configuration wizard
+       /jira configure <email> <token> <url>   - Configure Jira directly`;
+                    }
                 } else {
                     systemResponse = `Unknown command: ${command}`;
                 }
@@ -193,6 +293,7 @@ export const Chat: React.FC = () => {
                 <Box marginLeft={2}>
                     <Text><Text color="green" bold>/init</Text>        - Deep Scan & Initialize Project Context</Text>
                     <Text><Text color="green" bold>/investigate</Text> - Agentic Codebase Exploration</Text>
+                    <Text><Text color="green" bold>/jira</Text>        - Setup Jira Integration</Text>
                     <Text><Text color="green" bold>/read</Text>        - Read specific file context</Text>
                     <Text><Text color="green" bold>/scribe</Text>      - Generate documentation artifacts</Text>
                 </Box>

@@ -32,3 +32,6 @@ docs/
 
 EOF
 GEMINI.md
+PMX.md
+.pmx/config.json
+.pmx/context.json

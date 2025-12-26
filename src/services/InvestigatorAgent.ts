@@ -1,6 +1,7 @@
 import { LLMService, ChatMessage } from './LLMService.js';
 import { FileSystemService } from './FileSystemService.js';
 import { ContextService } from './ContextService.js';
+import { MCPService } from './MCPService.js';
 import path from 'path';
 
 interface ToolCall {
@@ -90,7 +91,8 @@ export class InvestigatorAgent {
     constructor(
         private llm: LLMService,
         private fileSystem: FileSystemService,
-        private contextService: ContextService
+        private contextService: ContextService,
+        private mcpService: MCPService
     ) { }
 
     async investigate(
@@ -101,29 +103,51 @@ export class InvestigatorAgent {
         const context = await this.contextService.getContext();
         const contextStr = context ? JSON.stringify(context) : 'No context yet.';
 
+        // Get MCP tools to include in system prompt
+        let mcpToolsDescription = '';
+        let hasJiraTools = false;
+        try {
+            const mcpTools = await this.mcpService.getTools();
+            if (mcpTools.length > 0) {
+                hasJiraTools = mcpTools.some((t: any) => t.function.name.startsWith('jira_'));
+                mcpToolsDescription = `
+
+        ═══════════════════════════════════════════════════════════════
+        EXTERNAL TOOLS (YOU ARE CONNECTED - USE THEM!)
+        ═══════════════════════════════════════════════════════════════
+        ${mcpTools.map((t: any) => `- ${t.function.name}: ${t.function.description || 'No description'}`).join('\n        ')}
+        
+        ⚠️  CRITICAL: You ARE connected to these external services. You CAN and MUST use these tools.
+        - When asked to create a Jira ticket: CALL jira_create_issue with the required fields.
+        - When asked to search/list issues: CALL jira_search.
+        - When asked about projects: CALL jira_get_all_projects.
+        
+        DO NOT say "I can't access Jira" or "I don't have access". YOU DO. Call the tool!`;
+            }
+        } catch (e) {
+            // MCP tools not available
+        }
+
         const messages: ChatMessage[] = [
             {
                 role: 'system',
-                content: `You are PMX Investigator, an autonomous agent.
-        Your goal is to answer the user's objective by exploring the codebase.
+                content: `You are PMX, an autonomous agent with FULL ACCESS to external tools.
         
         Project Context: ${contextStr}
         
-        Tools available:
-        - list_files(path): See what's in a folder (ignores .gitignore).
+        FILE SYSTEM TOOLS:
+        - list_files(path): See what's in a folder.
         - read_file(path): Read file content.
         - read_outline(path): Read structure of large files.
-        - write_file(path, content): Create/Update documentation. 
-          RESTRICTION: You can ONLY write to 'docs/', '.pmx/', 'PMX.md', or 'README.md'. 
-          DO NOT try to modify source code (src/, lib/, etc).
-        - search_files(pattern): Find code.
+        - write_file(path, content): Write documentation files only.
+        - search_files(pattern): Find code.${mcpToolsDescription}
 
-        Strategy:
-        1. Explore relevant directories.
-        2. Read key files. Use read_outline for big files.
-        3. Synthesize an answer.
-        
-        Be concise and efficient.`
+        ═══════════════════════════════════════════════════════════════
+        RULES:
+        1. When asked to DO something (create ticket, etc.): CALL THE TOOL. Do not describe what you would do.
+        2. You have function calling capability. Use it.
+        3. If you need info before calling a tool, ask the user - don't pretend you can't use tools.
+        ═══════════════════════════════════════════════════════════════`
             },
             { role: 'user', content: objective }
         ];
@@ -140,7 +164,16 @@ export class InvestigatorAgent {
             // Let's update LLMService to support tools properly in the next step.
             // For now, I'll assume we update LLMService.
 
-            const response = await this.llm.chatCompletionWithTools(messages, this.tools);
+            // Fetch MCP tools and merge
+            let availableTools = [...this.tools];
+            try {
+                const mcpTools = await this.mcpService.getTools();
+                availableTools = [...availableTools, ...mcpTools];
+            } catch (e) {
+                console.error("Failed to fetch MCP tools:", e);
+            }
+
+            const response = await this.llm.chatCompletionWithTools(messages, availableTools);
 
             if (!response) return "Failed to get response from LLM.";
 
@@ -192,6 +225,14 @@ export class InvestigatorAgent {
                         // Let's use a simple grep-like simulation or just fail for now if no grep tool.
                         // Actually, let's skip search for this lean version or implement a simple one.
                         result = "Search not implemented in lean mode yet. Use list/read.";
+                    } else {
+                        // Try MCP tools
+                        try {
+                            result = await this.mcpService.callTool(fnName, args);
+                        } catch (mcpError) {
+                            // If it fails there too, then report error
+                            result = `Error: Tool ${fnName} not found or failed. ${(mcpError as Error).message}`;
+                        }
                     }
                 } catch (e) {
                     result = `Error: ${(e as Error).message}`;

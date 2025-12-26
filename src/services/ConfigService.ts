@@ -8,6 +8,14 @@ interface PMXConfig {
     projectType?: 'frontend' | 'backend' | 'fullstack';
     contextFiles?: string[];
     exclude?: string[];
+    mcpServers?: Record<string, MCPServerConfig>;
+}
+
+export interface MCPServerConfig {
+    command?: string;
+    args?: string[];
+    url?: string;
+    env?: Record<string, string>;
 }
 
 interface GlobalConfig {
