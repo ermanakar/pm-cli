@@ -286,8 +286,8 @@ Examples:
 ║  📝 SMART DOCS (PRDs, Tickets, Specs)                        ║
 ║  └── "Create a PRD for dark mode"                            ║
 ║  └── /scribe prd <topic>                                     ║
-║  └── /scribe ticket <topic>                                  ║
-║  └── /scribe spec <topic>                                    ║
+║  └── /scribe prd <topic> --sync   (Confluence + Jira)        ║
+║  └── /scribe prd <topic> --jira   (Create tickets)           ║
 ║                                                              ║
 ║  📖 READ                                                     ║
 ║  └── "Show me the UserService"                               ║

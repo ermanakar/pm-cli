@@ -150,20 +150,33 @@ export const Chat: React.FC = () => {
                         systemResponse = await investigatorService.readFileContext(path);
                     }
                 } else if (command === '/scribe') {
-                    const type = args[0];
-                    const topic = args.slice(1).join(' ');
+                    // Parse flags from args
+                    const flags = args.filter(a => a.startsWith('--'));
+                    const nonFlagArgs = args.filter(a => !a.startsWith('--'));
+                    const type = nonFlagArgs[0];
+                    const topic = nonFlagArgs.slice(1).join(' ');
+
+                    const wantSync = flags.includes('--sync');
+                    const wantJira = flags.includes('--jira') || wantSync;
+                    const wantConfluence = flags.includes('--confluence') || wantSync;
+
                     if (!type || !topic) {
-                        systemResponse = `Usage: /scribe <type> <topic>
+                        systemResponse = `Usage: /scribe <type> <topic> [--sync] [--jira] [--confluence]
 
 📝 Document Types:
   • prd    - Product Requirements Document
   • ticket - Engineering Ticket
   • spec   - Technical Specification
 
+🔌 Sync Options:
+  • --sync       - Push to Confluence AND create Jira tickets
+  • --jira       - Create Jira tickets from acceptance criteria
+  • --confluence - Push document to Confluence
+
 Examples:
   /scribe prd User Authentication
-  /scribe ticket Fix Login Bug
-  /scribe spec API Refactor`;
+  /scribe prd Dark Mode --sync
+  /scribe ticket Fix Login Bug --jira`;
                     } else {
                         // Show step-by-step progress
                         let progressLog: string[] = [];
@@ -185,6 +198,54 @@ Examples:
                             updateProgress
                         );
 
+                        // Build completion summary
+                        let syncResults = '';
+
+                        // Handle Jira sync with confirmation
+                        if (wantJira) {
+                            const acCount = scribeService.getAcceptanceCriteriaCount(result.content);
+                            if (acCount > 0) {
+                                updateProgress(`\n🎫 Found ${acCount} acceptance criteria for Jira tickets:`);
+                                const previews = scribeService.getAcceptanceCriteriaPreviews(result.content);
+                                previews.forEach((p, i) => updateProgress(`   ${i + 1}. ${p}`));
+                                updateProgress(`\n📤 Creating ${acCount} Jira tickets in project SCRUM...`);
+
+                                const jiraResult = await scribeService.createJiraTicketsFromACs(
+                                    topic,
+                                    result.content,
+                                    'SCRUM', // TODO: Get from config
+                                    'Task'
+                                );
+
+                                if (jiraResult.success) {
+                                    syncResults += `\n🎫 Jira Tickets Created:\n`;
+                                    jiraResult.tickets.forEach(t => {
+                                        syncResults += `   ✓ ${t}\n`;
+                                    });
+                                } else {
+                                    syncResults += `\n❌ Jira sync failed: ${jiraResult.error}\n`;
+                                }
+                            } else {
+                                syncResults += `\n⚠️ No acceptance criteria found - skipping Jira tickets\n`;
+                            }
+                        }
+
+                        // Handle Confluence sync
+                        if (wantConfluence) {
+                            updateProgress('\n☁️ Syncing to Confluence...');
+                            const confluenceResult = await scribeService.syncToConfluence(
+                                topic,
+                                result.content,
+                                'SCRUM' // TODO: Get from config - space key
+                            );
+
+                            if (confluenceResult.success) {
+                                syncResults += `\n☁️ Confluence: ${confluenceResult.pageUrl || 'Page created'}\n`;
+                            } else {
+                                syncResults += `\n❌ Confluence sync failed: ${confluenceResult.error}\n`;
+                            }
+                        }
+
                         // Show completion summary with document preview option
                         const docPreview = result.content.length > 500
                             ? result.content.slice(0, 500) + '\n\n... (truncated)'
@@ -198,7 +259,7 @@ Examples:
 ║  📝 Type: ${result.type.toUpperCase().padEnd(47)}║
 ║  📋 Topic: ${result.topic.slice(0, 45).padEnd(46)}║
 ╚══════════════════════════════════════════════════════════════╝
-
+${syncResults}
 📖 Preview:
 ─────────────────────────────────────────────────────────────────
 ${docPreview}

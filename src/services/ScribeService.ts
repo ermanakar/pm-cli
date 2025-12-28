@@ -213,16 +213,8 @@ export class ScribeService {
         const filename = this.generateSafeFilename(type, topic);
         await this.fileSystem.writeFile(filename, content);
 
-        // 6. Optionally sync to external systems (future)
-        if (options.syncToConfluence && this.mcpService) {
-            onProgress?.('☁️ Syncing to Confluence...');
-            await this.syncToConfluence(topic, content);
-        }
-
-        if (options.createJiraTickets && this.mcpService) {
-            onProgress?.('🎫 Creating Jira tickets...');
-            await this.createJiraTicketsFromACs(topic, content);
-        }
+        // Note: Confluence/Jira sync is now handled separately in Chat.tsx
+        // with user confirmation before creating tickets
 
         onProgress?.('✅ Complete!');
 
@@ -423,54 +415,128 @@ Be specific and reference actual code patterns from the context when available.`
     }
 
     // ─────────────────────────────────────────────────────────────
-    // External Sync (Future Implementation)
+    // External Sync Implementation
     // ─────────────────────────────────────────────────────────────
 
-    private async syncToConfluence(title: string, content: string): Promise<void> {
-        if (!this.mcpService) return;
+    /**
+     * Check if Atlassian tools are available via MCP.
+     */
+    async checkAtlassianTools(): Promise<{ hasConfluence: boolean; hasJira: boolean }> {
+        if (!this.mcpService) return { hasConfluence: false, hasJira: false };
 
         try {
-            // Check if confluence tools are available
             const tools = await this.mcpService.getTools();
-            const hasConfluence = tools.some((t: any) => t.function.name === 'confluence_create_page');
-
-            if (hasConfluence) {
-                await this.mcpService.callTool('confluence_create_page', {
-                    title: `PMX: ${title}`,
-                    content: content,
-                    // Note: Would need space_key from config
-                });
-                console.log(`✅ Synced to Confluence: ${title}`);
-            }
+            return {
+                hasConfluence: tools.some((t: any) => t.function.name === 'confluence_create_page'),
+                hasJira: tools.some((t: any) => t.function.name === 'jira_create_issue')
+            };
         } catch (e) {
-            console.error('Confluence sync failed:', e);
+            return { hasConfluence: false, hasJira: false };
         }
     }
 
-    private async createJiraTicketsFromACs(topic: string, content: string): Promise<void> {
-        if (!this.mcpService) return;
+    /**
+     * Sync document to Confluence.
+     */
+    async syncToConfluence(
+        title: string,
+        content: string,
+        spaceKey: string
+    ): Promise<{ success: boolean; pageUrl?: string; error?: string }> {
+        if (!this.mcpService) {
+            return { success: false, error: 'MCP service not available' };
+        }
 
         try {
-            // Check if jira tools are available
-            const tools = await this.mcpService.getTools();
-            const hasJira = tools.some((t: any) => t.function.name === 'jira_create_issue');
+            const result = await this.mcpService.callTool('confluence_create_page', {
+                space_key: spaceKey,
+                title: `[PMX] ${title}`,
+                body: content
+            });
 
-            if (hasJira) {
-                // Extract acceptance criteria from content
-                const acs = this.extractAcceptanceCriteria(content);
-
-                for (const ac of acs) {
-                    await this.mcpService.callTool('jira_create_issue', {
-                        summary: `${topic}: ${ac.title}`,
-                        description: ac.criteria,
-                        // Note: Would need project_key from config
-                    });
-                }
-                console.log(`✅ Created ${acs.length} Jira tickets`);
-            }
+            // Try to extract page URL from result
+            const urlMatch = result?.match(/https?:\/\/[^\s]+/);
+            return {
+                success: true,
+                pageUrl: urlMatch ? urlMatch[0] : undefined
+            };
         } catch (e) {
-            console.error('Jira ticket creation failed:', e);
+            return {
+                success: false,
+                error: (e as Error).message
+            };
         }
+    }
+
+    /**
+     * Create Jira tickets from acceptance criteria.
+     */
+    async createJiraTicketsFromACs(
+        topic: string,
+        content: string,
+        projectKey: string,
+        issueType: string = 'Task'
+    ): Promise<{ success: boolean; tickets: string[]; error?: string }> {
+        if (!this.mcpService) {
+            return { success: false, tickets: [], error: 'MCP service not available' };
+        }
+
+        try {
+            const acs = this.extractAcceptanceCriteria(content);
+
+            if (acs.length === 0) {
+                return { success: true, tickets: [], error: 'No acceptance criteria found in document' };
+            }
+
+            const createdTickets: string[] = [];
+
+            for (const ac of acs) {
+                try {
+                    const result = await this.mcpService.callTool('jira_create_issue', {
+                        project_key: projectKey,
+                        summary: ac.title.slice(0, 100), // Jira summary limit
+                        description: `From PRD: ${topic}\n\n${ac.criteria}`,
+                        issuetype: issueType
+                    });
+
+                    // Try to extract ticket key from result
+                    const keyMatch = result?.match(/[A-Z]+-\d+/);
+                    if (keyMatch) {
+                        createdTickets.push(keyMatch[0]);
+                    } else {
+                        createdTickets.push('Created');
+                    }
+                } catch (ticketError) {
+                    createdTickets.push(`Failed: ${(ticketError as Error).message}`);
+                }
+            }
+
+            return {
+                success: true,
+                tickets: createdTickets
+            };
+        } catch (e) {
+            return {
+                success: false,
+                tickets: [],
+                error: (e as Error).message
+            };
+        }
+    }
+
+    /**
+     * Get acceptance criteria count without creating tickets (for confirmation).
+     */
+    getAcceptanceCriteriaCount(content: string): number {
+        return this.extractAcceptanceCriteria(content).length;
+    }
+
+    /**
+     * Get acceptance criteria previews for confirmation.
+     */
+    getAcceptanceCriteriaPreviews(content: string): string[] {
+        return this.extractAcceptanceCriteria(content)
+            .map(ac => ac.title.slice(0, 60) + (ac.title.length > 60 ? '...' : ''));
     }
 
     private extractAcceptanceCriteria(content: string): Array<{ title: string; criteria: string }> {
