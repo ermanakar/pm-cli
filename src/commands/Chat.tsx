@@ -7,7 +7,19 @@ import { useServices } from '../context/AppContext.js';
 import { ChatMessage } from '../services/LLMService.js';
 
 export const Chat: React.FC = () => {
-    const { llmService, investigatorService, scribeService, contextService, investigatorAgent, onboardingService, configService, mcpService } = useServices();
+    const {
+        llmService,
+        investigatorService,
+        scribeService,
+        contextService,
+        investigatorAgent,
+        onboardingService,
+        configService,
+        mcpService,
+        memoryService,
+        intentService,
+        healthService
+    } = useServices();
     const { exit } = useApp();
     const [input, setInput] = useState('');
     const [history, setHistory] = useState<ChatMessage[]>([]);
@@ -247,8 +259,141 @@ You can now ask me things like:
                         systemResponse = `Usage: /jira setup   - Start Jira configuration wizard
        /jira configure <email> <token> <url>   - Configure Jira directly`;
                     }
+                } else if (command === '/memory') {
+                    // Memory commands
+                    const subCmd = args[0];
+                    if (!subCmd || subCmd === 'view') {
+                        setStreamingContent('Loading strategic memory...');
+                        const summary = await memoryService.getSummary();
+                        const context = await memoryService.getContextForAgent();
+
+                        systemResponse = `🧠 PMX Strategic Memory
+
+📊 Summary:
+  • Identity: ${summary.hasIdentity ? '✅ Set' : '❌ Not set (run /init)'}
+  • OKRs: ${summary.okrCount}
+  • Decisions: ${summary.decisionCount}
+  • Open Risks: ${summary.openRiskCount}
+  • Personas: ${summary.personaCount}
+  • Insights: ${summary.insightCount}
+
+📋 Current Context:
+${context}
+
+💡 Commands:
+  /memory okr <objective>     - Add a new OKR
+  /memory decision <title>    - Log a decision
+  /memory risk <title>        - Add a risk
+  /memory persona <name>      - Add a persona
+`;
+                    } else if (subCmd === 'okr') {
+                        const objective = args.slice(1).join(' ');
+                        if (!objective) {
+                            systemResponse = 'Usage: /memory okr <objective>';
+                        } else {
+                            const okr = await memoryService.addOKR(objective);
+                            systemResponse = `✅ OKR Added!
+
+Objective: ${okr.objective}
+Quarter: ${okr.quarter}
+Status: ${okr.status}
+
+💡 To add Key Results, use:
+/memory kr ${okr.id.slice(0, 8)} <description> <target> <unit>
+`;
+                        }
+                    } else if (subCmd === 'decision') {
+                        const title = args.slice(1).join(' ');
+                        if (!title) {
+                            systemResponse = 'Usage: /memory decision <title>';
+                        } else {
+                            const decision = await memoryService.logDecision({
+                                title,
+                                context: 'Logged via CLI',
+                                decision: title,
+                                rationale: 'To be documented',
+                                alternatives: [],
+                                tags: []
+                            });
+                            systemResponse = `✅ Decision Logged!
+
+Title: ${decision.title}
+Date: ${new Date(decision.date).toLocaleDateString()}
+
+💡 You can update this decision with more context using the memory file at .pmx/memory.json
+`;
+                        }
+                    } else if (subCmd === 'risk') {
+                        const title = args.slice(1).join(' ');
+                        if (!title) {
+                            systemResponse = 'Usage: /memory risk <title>';
+                        } else {
+                            const risk = await memoryService.addRisk({
+                                title,
+                                description: 'To be documented',
+                                likelihood: 'medium',
+                                impact: 'medium',
+                                mitigation: 'To be determined',
+                                status: 'open'
+                            });
+                            systemResponse = `⚠️ Risk Registered!
+
+Title: ${risk.title}
+Likelihood: ${risk.likelihood}
+Impact: ${risk.impact}
+Status: ${risk.status}
+
+💡 Update risk details in .pmx/memory.json
+`;
+                        }
+                    } else if (subCmd === 'persona') {
+                        const name = args.slice(1).join(' ');
+                        if (!name) {
+                            systemResponse = 'Usage: /memory persona <name>';
+                        } else {
+                            const persona = await memoryService.addPersona({
+                                name,
+                                role: 'To be defined',
+                                goals: [],
+                                painPoints: [],
+                                behaviors: []
+                            });
+                            systemResponse = `👤 Persona Added!
+
+Name: ${persona.name}
+
+💡 Update persona details in .pmx/memory.json
+`;
+                        }
+                    } else {
+                        systemResponse = `Unknown memory command: ${subCmd}
+
+Usage:
+  /memory              - View strategic memory
+  /memory okr <text>   - Add an OKR
+  /memory decision <text> - Log a decision
+  /memory risk <text>  - Add a risk
+  /memory persona <name> - Add a persona
+`;
+                    }
+                } else if (command === '/health') {
+                    // Health check commands
+                    const subCmd = args[0];
+                    if (subCmd === 'quick') {
+                        setStreamingContent('Running quick health check...');
+                        const stats = await healthService.getQuickStats();
+                        systemResponse = healthService.formatQuickStats(stats);
+                    } else {
+                        setStreamingContent('Running full health check... This may take a moment.');
+                        const report = await healthService.runHealthCheck();
+                        systemResponse = healthService.formatReport(report);
+                    }
+                } else if (command === '/help') {
+                    systemResponse = intentService.getHelpText();
                 } else {
-                    systemResponse = `Unknown command: ${command}`;
+                    systemResponse = `Unknown command: ${command}
+
+Type /help to see available commands.`;
                 }
 
                 setHistory([...newHistory, { role: 'assistant', content: systemResponse }]);
@@ -257,15 +402,128 @@ You can now ask me things like:
                 return;
             }
 
-            // Normal Chat
-            let fullResponse = '';
-            await llmService.streamChatCompletion(newHistory, (chunk: string) => {
-                fullResponse += chunk;
-                setStreamingContent(fullResponse);
-            });
+            // Natural Language Intent Detection
+            setStreamingContent('Understanding your request...');
+            const intent = await intentService.classifyIntent(value);
 
-            setHistory([...newHistory, { role: 'assistant', content: fullResponse }]);
-            setStreamingContent('');
+            switch (intent.type) {
+                case 'investigate':
+                    setStreamingContent('Investigating...');
+                    const investigateResult = await investigatorAgent.investigate(
+                        intent.query,
+                        (status) => setStreamingContent(status),
+                        async (tool, args) => {
+                            return new Promise<boolean>((resolve) => {
+                                setConfirmation({ tool, args, resolve });
+                            });
+                        }
+                    );
+                    setHistory([...newHistory, { role: 'assistant', content: investigateResult }]);
+                    setStreamingContent('');
+                    setIsLoading(false);
+                    return;
+
+                case 'plan':
+                    // Use investigator to plan a feature
+                    setStreamingContent(`Planning feature: ${intent.feature}...`);
+                    const planResult = await investigatorAgent.investigate(
+                        `Create a detailed Product Requirements Document (PRD) for: ${intent.feature}. 
+                        First investigate the existing codebase to understand current architecture, 
+                        then draft a plan that fits with the existing patterns.`,
+                        (status) => setStreamingContent(status)
+                    );
+                    setHistory([...newHistory, { role: 'assistant', content: planResult }]);
+                    setStreamingContent('');
+                    setIsLoading(false);
+                    return;
+
+                case 'read':
+                    const readResult = await investigatorService.readFileContext(intent.path);
+                    setHistory([...newHistory, { role: 'assistant', content: readResult }]);
+                    setStreamingContent('');
+                    setIsLoading(false);
+                    return;
+
+                case 'init':
+                    setStreamingContent('Initializing Deep Scan...');
+                    const initSummary = await onboardingService.runDeepScan((status) => setStreamingContent(status));
+                    setHistory([...newHistory, { role: 'assistant', content: `Deep Scan complete.\n\n${initSummary}` }]);
+                    setStreamingContent('');
+                    setIsLoading(false);
+                    return;
+
+                case 'memory':
+                    const memSummary = await memoryService.getSummary();
+                    const memContext = await memoryService.getContextForAgent();
+                    const memResponse = `🧠 Strategic Memory\n\n${memContext}\n\n(${memSummary.okrCount} OKRs, ${memSummary.decisionCount} decisions, ${memSummary.openRiskCount} open risks)`;
+                    setHistory([...newHistory, { role: 'assistant', content: memResponse }]);
+                    setStreamingContent('');
+                    setIsLoading(false);
+                    return;
+
+                case 'health':
+                    setStreamingContent('Running health check...');
+                    if (intent.quick) {
+                        const quickStats = await healthService.getQuickStats();
+                        const response = healthService.formatQuickStats(quickStats);
+                        setHistory([...newHistory, { role: 'assistant', content: response }]);
+                    } else {
+                        const fullReport = await healthService.runHealthCheck();
+                        const response = healthService.formatReport(fullReport);
+                        setHistory([...newHistory, { role: 'assistant', content: response }]);
+                    }
+                    setStreamingContent('');
+                    setIsLoading(false);
+                    return;
+
+                case 'help':
+                    setHistory([...newHistory, { role: 'assistant', content: intentService.getHelpText() }]);
+                    setStreamingContent('');
+                    setIsLoading(false);
+                    return;
+
+                case 'quit':
+                    exit();
+                    return;
+
+                case 'jira':
+                    // Route to investigator with Jira context
+                    setStreamingContent('Working with Jira...');
+                    const jiraResult = await investigatorAgent.investigate(
+                        intent.data || 'Show available Jira projects',
+                        (status) => setStreamingContent(status)
+                    );
+                    setHistory([...newHistory, { role: 'assistant', content: jiraResult }]);
+                    setStreamingContent('');
+                    setIsLoading(false);
+                    return;
+
+                case 'chat':
+                default:
+                    // Regular chat - inject strategic context
+                    const memoryContext = await memoryService.getContextForAgent();
+                    const enrichedHistory = [
+                        {
+                            role: 'system' as const,
+                            content: `You are PMX, an AI Product Manager assistant. You have access to the project's strategic context:
+
+${memoryContext}
+
+Be helpful, concise, and product-focused. If the user seems to be asking about the codebase, suggest using specific investigation commands.`
+                        },
+                        ...newHistory
+                    ];
+
+                    let fullResponse = '';
+                    await llmService.streamChatCompletion(enrichedHistory, (chunk: string) => {
+                        fullResponse += chunk;
+                        setStreamingContent(fullResponse);
+                    });
+
+                    setHistory([...newHistory, { role: 'assistant', content: fullResponse }]);
+                    setStreamingContent('');
+                    break;
+            }
         } catch (error) {
             setHistory([...newHistory, { role: 'assistant', content: `Error: ${error}` }]);
         } finally {
@@ -289,18 +547,19 @@ You can now ask me things like:
             <Text color="gray">Your AI-powered Product Engineering Partner</Text>
 
             <Box flexDirection="column" marginTop={1}>
-                <Text bold underline>Available Commands:</Text>
-                <Box marginLeft={2}>
+                <Text bold underline>Commands (or just ask naturally!):</Text>
+                <Box flexDirection="column" marginLeft={2}>
                     <Text><Text color="green" bold>/init</Text>        - Deep Scan & Initialize Project Context</Text>
                     <Text><Text color="green" bold>/investigate</Text> - Agentic Codebase Exploration</Text>
-                    <Text><Text color="green" bold>/jira</Text>        - Setup Jira Integration</Text>
-                    <Text><Text color="green" bold>/read</Text>        - Read specific file context</Text>
-                    <Text><Text color="green" bold>/scribe</Text>      - Generate documentation artifacts</Text>
+                    <Text><Text color="cyan" bold>/memory</Text>      - View & Manage Strategic Memory (OKRs, Decisions, Risks)</Text>
+                    <Text><Text color="cyan" bold>/health</Text>      - Run Codebase Health Check</Text>
+                    <Text><Text color="gray" bold>/jira</Text>        - Setup Jira Integration</Text>
+                    <Text><Text color="gray" bold>/help</Text>        - Show all commands</Text>
                 </Box>
             </Box>
 
-            <Box marginTop={1} borderStyle="single" borderColor="yellow" paddingX={1}>
-                <Text color="yellow">⚠️  TIP: Run <Text bold>/init</Text> first to generate your PMX.md profile!</Text>
+            <Box marginTop={1} borderStyle="single" borderColor="green" paddingX={1}>
+                <Text color="green">💡 NEW: Just type naturally! "How does auth work?" or "Add an OKR"</Text>
             </Box>
         </Box>
     );

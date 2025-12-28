@@ -15,6 +15,11 @@ import { InvestigatorAgent } from './services/InvestigatorAgent.js';
 import { OnboardingService } from './services/OnboardingService.js';
 import { MCPService } from './services/MCPService.js';
 
+// NEW: Enhanced Brain Services
+import { MemoryService } from './services/MemoryService.js';
+import { IntentService } from './services/IntentService.js';
+import { HealthService } from './services/HealthService.js';
+
 // Initialize services
 const safetyService = new SafetyService();
 const configService = new ConfigService(process.cwd(), safetyService);
@@ -30,7 +35,15 @@ const mcpService = new MCPService(configService);
 const investigatorService = new InvestigatorService(fileSystemService, llmService, contextService);
 const scribeService = new ScribeService(fileSystemService, llmService);
 const investigatorAgent = new InvestigatorAgent(llmService, fileSystemService, contextService, mcpService);
-const onboardingService = new OnboardingService(investigatorAgent, contextService, fileSystemService, llmService);
+
+// NEW: Initialize enhanced brain services (memoryService needed by onboardingService)
+const memoryService = new MemoryService(process.cwd());
+const intentService = new IntentService(llmService);
+const healthService = new HealthService(fileSystemService, process.cwd());
+
+// OnboardingService now takes memoryService to populate strategic memory on /init
+const onboardingService = new OnboardingService(investigatorAgent, contextService, fileSystemService, llmService, memoryService);
+
 // Kicking off MCP connections in background
 mcpService.ensureConnections();
 
@@ -45,6 +58,9 @@ const services = {
     investigatorAgent,
     onboardingService,
     mcpService,
+    memoryService,
+    intentService,
+    healthService,
 };
 
 type View = 'welcome' | 'chat';

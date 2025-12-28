@@ -1,0 +1,32 @@
+{
+  "identity": {
+    "name": "pmx",
+    "oneLiner": "pmx is a terminal-first AI product operating system that turns your Git repo into plans, specs, docs, and tickets via an interactive CLI “AI PM”.",
+    "domain": "Developer tooling / AI-assisted product management (Product Ops)",
+    "stack": "Node.js, TypeScript (ESM), Commander, React Ink, OpenAI SDK, Zod, fs-extra (file-based JSON), MCP SDK (Jira integration), tsup"
+  },
+  "okrs": [
+    {
+      "id": "7fcc4c27-f1ac-40ce-bfab-e95f0f55046e",
+      "objective": "improve usage",
+      "keyResults": [],
+      "quarter": "Q4 2025",
+      "status": "on-track",
+      "createdAt": "2025-12-26T22:24:01.516Z"
+    }
+  ],
+  "decisions": [],
+  "risks": [],
+  "personas": [],
+  "insights": [
+    {
+      "id": "fe3e8fdc-1a4c-443e-b01a-e5fa7b8d405f",
+      "date": "2025-12-26T22:29:47.122Z",
+      "type": "architecture",
+      "content": "Project initialized: pmx - Developer tooling / AI-assisted product management (Product Ops) application built with Node.js, TypeScript (ESM), Commander, React Ink, OpenAI SDK, Zod, fs-extra (file-based JSON), MCP SDK (Jira integration), tsup",
+      "source": "agent"
+    }
+  ],
+  "lastUpdated": "2025-12-26T22:29:47.122Z",
+  "version": "1.0.0"
+}

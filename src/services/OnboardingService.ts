@@ -3,13 +3,15 @@ import { InvestigatorAgent } from './InvestigatorAgent.js';
 import { ContextService } from './ContextService.js';
 import { FileSystemService } from './FileSystemService.js';
 import { LLMService } from './LLMService.js';
+import { MemoryService } from './MemoryService.js';
 
 export class OnboardingService {
     constructor(
         private investigator: InvestigatorAgent,
         private contextService: ContextService,
         private fileSystem: FileSystemService,
-        private llm: LLMService
+        private llm: LLMService,
+        private memoryService: MemoryService
     ) { }
 
     async runDeepScan(onUpdate?: (status: string) => void): Promise<string> {
@@ -65,6 +67,21 @@ export class OnboardingService {
                     architecture: data.stack,
                     domain: data.domain,
                     context: data.context
+                });
+
+                // Initialize Memory with identity
+                await this.memoryService.initializeMemory({
+                    name: data.name,
+                    oneLiner: data.oneLiner,
+                    domain: data.domain,
+                    stack: data.stack
+                });
+
+                // Add initial insight from the scan
+                await this.memoryService.addInsight({
+                    type: 'architecture',
+                    content: `Project initialized: ${data.name} - ${data.domain} application built with ${data.stack}`,
+                    source: 'agent'
                 });
 
                 // Create PMX.md

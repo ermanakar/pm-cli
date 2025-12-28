@@ -9,6 +9,9 @@ import { ContextService } from '../services/ContextService.js';
 import { InvestigatorAgent } from '../services/InvestigatorAgent.js';
 import { OnboardingService } from '../services/OnboardingService.js';
 import { MCPService } from '../services/MCPService.js';
+import { MemoryService } from '../services/MemoryService.js';
+import { IntentService } from '../services/IntentService.js';
+import { HealthService } from '../services/HealthService.js';
 
 interface AppContextType {
     configService: ConfigService;
@@ -21,6 +24,9 @@ interface AppContextType {
     investigatorAgent: InvestigatorAgent;
     onboardingService: OnboardingService;
     mcpService: MCPService;
+    memoryService: MemoryService;
+    intentService: IntentService;
+    healthService: HealthService;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
