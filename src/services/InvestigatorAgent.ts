@@ -2,6 +2,7 @@ import { LLMService, ChatMessage } from './LLMService.js';
 import { FileSystemService } from './FileSystemService.js';
 import { ContextService } from './ContextService.js';
 import { MCPService } from './MCPService.js';
+import { MemoryService } from './MemoryService.js';
 import path from 'path';
 
 interface ToolCall {
@@ -92,7 +93,8 @@ export class InvestigatorAgent {
         private llm: LLMService,
         private fileSystem: FileSystemService,
         private contextService: ContextService,
-        private mcpService: MCPService
+        private mcpService: MCPService,
+        private memoryService?: MemoryService
     ) { }
 
     async investigate(
@@ -102,6 +104,12 @@ export class InvestigatorAgent {
     ): Promise<string> {
         const context = await this.contextService.getContext();
         const contextStr = context ? JSON.stringify(context) : 'No context yet.';
+
+        // Get strategic memory context
+        let memoryContext = '';
+        if (this.memoryService) {
+            memoryContext = await this.memoryService.getContextForAgent();
+        }
 
         // Get MCP tools to include in system prompt
         let mcpToolsDescription = '';
@@ -133,8 +141,13 @@ export class InvestigatorAgent {
                 role: 'system',
                 content: `You are PMX, an autonomous agent with FULL ACCESS to external tools.
         
-        Project Context: ${contextStr}
-        
+        PROJECT CONTEXT: ${contextStr}
+        ${memoryContext ? `
+        ═══════════════════════════════════════════════════════════════
+        STRATEGIC MEMORY (OKRs, Decisions, Risks, Personas)
+        ═══════════════════════════════════════════════════════════════
+        ${memoryContext}
+        ` : ''}
         FILE SYSTEM TOOLS:
         - list_files(path): See what's in a folder.
         - read_file(path): Read file content.

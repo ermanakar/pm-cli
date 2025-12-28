@@ -9,6 +9,9 @@ interface PMXConfig {
     contextFiles?: string[];
     exclude?: string[];
     mcpServers?: Record<string, MCPServerConfig>;
+    // Atlassian integration settings
+    jiraProjectKey?: string;
+    confluenceSpaceKey?: string;
 }
 
 export interface MCPServerConfig {

@@ -496,13 +496,28 @@ Be specific and reference actual code patterns from the context when available.`
                         project_key: projectKey,
                         summary: ac.title.slice(0, 100), // Jira summary limit
                         description: `From PRD: ${topic}\n\n${ac.criteria}`,
-                        issuetype: issueType
+                        issue_type: issueType  // Correct parameter name
                     });
 
-                    // Try to extract ticket key from result
+                    // Debug: log the raw result to understand format
+                    console.log('Jira create result:', result);
+
+                    // Try multiple patterns to extract ticket key
+                    // Pattern 1: PROJ-123 anywhere in text
                     const keyMatch = result?.match(/[A-Z]+-\d+/);
+                    // Pattern 2: "key": "PROJ-123" in JSON
+                    const jsonKeyMatch = result?.match(/"key"\s*:\s*"([A-Z]+-\d+)"/);
+                    // Pattern 3: id or self URL containing the key
+                    const urlMatch = result?.match(/\/([A-Z]+-\d+)/);
+
                     if (keyMatch) {
                         createdTickets.push(keyMatch[0]);
+                    } else if (jsonKeyMatch) {
+                        createdTickets.push(jsonKeyMatch[1]);
+                    } else if (urlMatch) {
+                        createdTickets.push(urlMatch[1]);
+                    } else if (result && result.includes('created') || result.includes('success')) {
+                        createdTickets.push('Created (key not returned)');
                     } else {
                         createdTickets.push('Created');
                     }
@@ -540,21 +555,49 @@ Be specific and reference actual code patterns from the context when available.`
     }
 
     private extractAcceptanceCriteria(content: string): Array<{ title: string; criteria: string }> {
-        // Simple extraction - looks for numbered AC items
-        const acSection = content.match(/## Acceptance Criteria\n([\s\S]*?)(?=\n##|$)/);
-        if (!acSection) return [];
+        // Try multiple patterns for the AC section header
+        const patterns = [
+            /##\s*Acceptance Criteria\s*\n([\s\S]*?)(?=\n## [A-Z]|$)/i,  // Stop at next ## section
+            /##\s*Acceptance\s*\n([\s\S]*?)(?=\n## [A-Z]|$)/i,
+            /###\s*Acceptance Criteria\s*\n([\s\S]*?)(?=\n## [A-Z]|$)/i,
+        ];
+
+        let acContent: string | null = null;
+        for (const pattern of patterns) {
+            const match = content.match(pattern);
+            if (match) {
+                acContent = match[1];
+                break;
+            }
+        }
+
+        if (!acContent) return [];
 
         const items: Array<{ title: string; criteria: string }> = [];
-        const lines = acSection[1].split('\n').filter(l => l.trim());
+        const lines = acContent.split('\n');
 
         let currentItem: { title: string; criteria: string } | null = null;
 
         for (const line of lines) {
-            if (line.match(/^[\d]+\.|^-\s*\*\*/)) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+
+            // Only match AC headers - be strict:
+            // ### 1) Title  or  ### N) Title  or  **1. Title**
+            const headerMatch = trimmed.match(/^###\s*(\d+)[\.\)]\s*(.+)/) ||    // ### 1) or ### 1. Title
+                trimmed.match(/^\*\*(\d+)[\.\)]\s*(.+?)\*\*/) || // **1. Title** or **1) Title**
+                trimmed.match(/^(\d+)[\.\)]\s+([A-Z].{5,})/);     // 1. or 1) Title (capital start)
+
+            if (headerMatch) {
                 if (currentItem) items.push(currentItem);
-                currentItem = { title: line.replace(/^[\d]+\.\s*|^-\s*/, ''), criteria: '' };
+                const title = headerMatch[2] || headerMatch[1];
+                currentItem = {
+                    title: title.replace(/\*\*/g, '').trim(),
+                    criteria: ''
+                };
             } else if (currentItem) {
-                currentItem.criteria += line + '\n';
+                // Append content to current item (Given/When/Then etc.)
+                currentItem.criteria += trimmed + '\n';
             }
         }
 

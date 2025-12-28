@@ -168,9 +168,11 @@ Generate context-aware PRDs, tickets, and specs. Smart Scribe **automatically**:
 - Investigates your codebase for relevant patterns
 - Pulls strategic memory (OKRs, personas, decisions, risks)
 - Uses structured templates with clear sections
+- **Syncs to Jira** - Create tickets from acceptance criteria with `--jira`
 
 ```bash
 > /scribe prd User Authentication
+> /scribe prd Dark Mode --jira       # Create Jira tickets from ACs
 > /scribe ticket Fix Login Bug
 > /scribe spec API Refactor
 ```
@@ -182,8 +184,6 @@ Generate context-aware PRDs, tickets, and specs. Smart Scribe **automatically**:
 
 *Output goes to `docs/<type>-<topic>.md`*
 
-**Coming Soon:** Direct sync to Confluence and auto-create Jira tickets from acceptance criteria.
-
 ---
 
 ## 🔌 Integrations
@@ -193,14 +193,32 @@ Generate context-aware PRDs, tickets, and specs. Smart Scribe **automatically**:
 Connect PMX to your Jira instance for ticket management.
 
 ```bash
-> /jira setup                    # Show setup instructions
-> /jira configure <email> <token> <url>  # Configure connection
+> /jira setup                                      # Show setup instructions
+> /jira configure <email> <token> <url> <project>  # Configure connection
+> /jira project CORE                               # Change project key
 ```
 
 Once connected, ask naturally:
 ```bash
 > Create a Jira ticket for the login bug
 > Show me open issues in project CORE
+```
+
+**Smart Scribe Integration:**
+```bash
+> /scribe prd Dark Mode --jira
+
+🎫 Found 8 acceptance criteria for Jira tickets:
+   1. Default behavior (System)
+   2. Manual toggle: Dark
+   ...
+
+📤 Creating 8 Jira tickets in project CORE...
+
+🎫 Jira Tickets Created:
+   ✓ CORE-101
+   ✓ CORE-102
+   ...
 ```
 
 ### MCP Status
@@ -251,7 +269,9 @@ PMX is designed to **read** your entire codebase but only **write** to safe loca
 | `/health quick` | Quick stats |
 | `/read <path>` | Read a file |
 | `/scribe <type> <topic>` | Generate documentation |
+| `/scribe <type> <topic> --jira` | Generate docs + Jira tickets |
 | `/jira setup` | Jira setup instructions |
+| `/jira project <key>` | View/change project key |
 | `/mcp status` | Check MCP connections |
 | `/help` | Show all commands |
 

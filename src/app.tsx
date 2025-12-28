@@ -33,10 +33,14 @@ const fileSystemService = new FileSystemService(safetyService);
 const contextService = new ContextService(fileSystemService, configService);
 const mcpService = new MCPService(configService);
 const investigatorService = new InvestigatorService(fileSystemService, llmService, contextService);
-const investigatorAgent = new InvestigatorAgent(llmService, fileSystemService, contextService, mcpService);
 
-// Enhanced brain services (memoryService needed by multiple services)
+// Memory service needed by multiple services (create early)
 const memoryService = new MemoryService(process.cwd());
+
+// InvestigatorAgent now gets strategic memory context
+const investigatorAgent = new InvestigatorAgent(llmService, fileSystemService, contextService, mcpService, memoryService);
+
+// Enhanced brain services
 const intentService = new IntentService(llmService);
 const healthService = new HealthService(fileSystemService, process.cwd());
 

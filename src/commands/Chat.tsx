@@ -201,24 +201,33 @@ Examples:
                         // Build completion summary
                         let syncResults = '';
 
+                        // Get project keys from config
+                        const projectConfig = configService.getConfig();
+                        const jiraProjectKey = projectConfig.jiraProjectKey || 'SCRUM';
+                        const confluenceSpaceKey = projectConfig.confluenceSpaceKey || jiraProjectKey;
+
                         // Handle Jira sync with confirmation
                         if (wantJira) {
+                            if (!projectConfig.jiraProjectKey) {
+                                syncResults += `\n⚠️ No Jira project key configured. Using default: ${jiraProjectKey}\n   Run /jira project <KEY> to set your project.\n`;
+                            }
+
                             const acCount = scribeService.getAcceptanceCriteriaCount(result.content);
                             if (acCount > 0) {
                                 updateProgress(`\n🎫 Found ${acCount} acceptance criteria for Jira tickets:`);
                                 const previews = scribeService.getAcceptanceCriteriaPreviews(result.content);
                                 previews.forEach((p, i) => updateProgress(`   ${i + 1}. ${p}`));
-                                updateProgress(`\n📤 Creating ${acCount} Jira tickets in project SCRUM...`);
+                                updateProgress(`\n📤 Creating ${acCount} Jira tickets in project ${jiraProjectKey}...`);
 
                                 const jiraResult = await scribeService.createJiraTicketsFromACs(
                                     topic,
                                     result.content,
-                                    'SCRUM', // TODO: Get from config
+                                    jiraProjectKey,
                                     'Task'
                                 );
 
                                 if (jiraResult.success) {
-                                    syncResults += `\n🎫 Jira Tickets Created:\n`;
+                                    syncResults += `\n🎫 Jira Tickets Created (${jiraProjectKey}):\n`;
                                     jiraResult.tickets.forEach(t => {
                                         syncResults += `   ✓ ${t}\n`;
                                     });
@@ -236,7 +245,7 @@ Examples:
                             const confluenceResult = await scribeService.syncToConfluence(
                                 topic,
                                 result.content,
-                                'SCRUM' // TODO: Get from config - space key
+                                confluenceSpaceKey
                             );
 
                             if (confluenceResult.success) {
@@ -302,24 +311,28 @@ ${tools.length > 0 ? tools.map((t: any) => `- ${t.function.name}`).join('\n') : 
                         // For now, provide instructions since multi-step input in Ink is complex
                         systemResponse = `🔧 Jira Setup
 
-To configure Jira integration, I need 3 pieces of information:
+To configure Jira integration, I need 4 pieces of information:
 1. Your Atlassian email
 2. Your API token (get one at https://id.atlassian.com/manage-profile/security/api-tokens)
 3. Your Jira instance URL (e.g., https://yourcompany.atlassian.net)
+4. Your default project key (e.g., CORE, SCRUM, PROD)
 
 Run the following command with your details:
-/jira configure <email> <api_token> <instance_url>
+/jira configure <email> <api_token> <instance_url> <project_key>
 
 Example:
-/jira configure john@company.com ATATT3x... https://mycompany.atlassian.net
+/jira configure john@company.com ATATT3x... https://mycompany.atlassian.net CORE
 `;
                     } else if (subCmd === 'configure') {
                         const email = args[1];
                         const token = args[2];
                         const instanceUrl = args[3];
+                        const projectKey = args[4];
 
-                        if (!email || !token || !instanceUrl) {
-                            systemResponse = 'Usage: /jira configure <email> <api_token> <instance_url>';
+                        if (!email || !token || !instanceUrl || !projectKey) {
+                            systemResponse = `Usage: /jira configure <email> <api_token> <instance_url> <project_key>
+
+Example: /jira configure john@co.com ATATT3x... https://co.atlassian.net CORE`;
                         } else {
                             setStreamingContent('Saving Jira configuration...');
                             try {
@@ -327,6 +340,8 @@ Example:
                                 const currentConfig = configService.getConfig();
                                 await configService.saveConfig({
                                     ...currentConfig,
+                                    jiraProjectKey: projectKey.toUpperCase(),
+                                    confluenceSpaceKey: projectKey.toUpperCase(), // Default to same as Jira
                                     mcpServers: {
                                         ...(currentConfig.mcpServers || {}),
                                         jira: {
@@ -351,21 +366,57 @@ Example:
 
                                 systemResponse = `✅ Jira configured successfully!
 
-Saved to: .pmx/config.json
-Connected Tools: ${jiraTools.length} Jira tools available
+📋 Configuration saved:
+   • Project Key: ${projectKey.toUpperCase()}
+   • Instance: ${instanceUrl}
+   • Connected Tools: ${jiraTools.length} available
 
-You can now ask me things like:
-- "Show me open bugs in project X"
+🚀 Smart Scribe can now sync to Jira:
+   /scribe prd <topic> --jira
+
+You can also ask me things like:
+- "Show me open bugs in ${projectKey.toUpperCase()}"
 - "Create a ticket for the login bug"
-- "What are my assigned issues?"
 `;
                             } catch (error) {
                                 systemResponse = `❌ Failed to configure Jira: ${error}`;
                             }
                         }
+                    } else if (subCmd === 'project') {
+                        // Quick way to change just the project key
+                        const newProjectKey = args[1];
+                        if (!newProjectKey) {
+                            const currentConfig = configService.getConfig();
+                            if (currentConfig.jiraProjectKey) {
+                                systemResponse = `Current Jira project key: ${currentConfig.jiraProjectKey}
+
+To change: /jira project <NEW_PROJECT_KEY>`;
+                            } else {
+                                systemResponse = `No Jira project key configured.
+
+Set one with: /jira project <PROJECT_KEY>
+Or run full setup: /jira setup`;
+                            }
+                        } else {
+                            const currentConfig = configService.getConfig();
+                            await configService.saveConfig({
+                                ...currentConfig,
+                                jiraProjectKey: newProjectKey.toUpperCase()
+                            });
+                            systemResponse = `✅ Jira project key updated to: ${newProjectKey.toUpperCase()}`;
+                        }
                     } else {
-                        systemResponse = `Usage: /jira setup   - Start Jira configuration wizard
-       /jira configure <email> <token> <url>   - Configure Jira directly`;
+                        const currentConfig = configService.getConfig();
+                        const projectInfo = currentConfig.jiraProjectKey
+                            ? `Current project: ${currentConfig.jiraProjectKey}`
+                            : 'No project configured';
+
+                        systemResponse = `${projectInfo}
+
+Usage:
+  /jira setup                  - Full configuration wizard
+  /jira configure <...>        - Configure with all params
+  /jira project <KEY>          - View/change project key`;
                     }
                 } else if (command === '/memory') {
                     // Memory commands
