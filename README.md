@@ -162,15 +162,27 @@ Read file contents with syntax highlighting.
 
 ---
 
-### 6. Generate Docs (`/scribe`)
+### 6. Smart Docs (`/scribe`)
 
-Generate documentation artifacts from context.
+Generate context-aware PRDs, tickets, and specs. Smart Scribe **automatically**:
+- Investigates your codebase for relevant patterns
+- Pulls strategic memory (OKRs, personas, decisions, risks)
+- Uses structured templates with clear sections
 
 ```bash
 > /scribe prd User Authentication
+> /scribe ticket Fix Login Bug
+> /scribe spec API Refactor
 ```
 
-*Creates a Markdown file in `docs/` with structured content.*
+*What it generates:*
+- **PRDs** - Strategic alignment, personas, user stories, acceptance criteria
+- **Tickets** - Context, file references, Given/When/Then criteria
+- **Specs** - Architecture, API changes, database changes, testing
+
+*Output goes to `docs/<type>-<topic>.md`*
+
+**Coming Soon:** Direct sync to Confluence and auto-create Jira tickets from acceptance criteria.
 
 ---
 

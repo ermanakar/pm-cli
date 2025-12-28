@@ -551,15 +551,16 @@ Be helpful, concise, and product-focused. If the user seems to be asking about t
                 <Box flexDirection="column" marginLeft={2}>
                     <Text><Text color="green" bold>/init</Text>        - Deep Scan & Initialize Project Context</Text>
                     <Text><Text color="green" bold>/investigate</Text> - Agentic Codebase Exploration</Text>
-                    <Text><Text color="cyan" bold>/memory</Text>      - View & Manage Strategic Memory (OKRs, Decisions, Risks)</Text>
-                    <Text><Text color="cyan" bold>/health</Text>      - Run Codebase Health Check</Text>
-                    <Text><Text color="gray" bold>/jira</Text>        - Setup Jira Integration</Text>
+                    <Text><Text color="yellow" bold>/scribe</Text>      - Smart Docs: Generate PRDs, Tickets, Specs</Text>
+                    <Text><Text color="cyan" bold>/memory</Text>      - Strategic Memory (OKRs, Decisions, Risks)</Text>
+                    <Text><Text color="cyan" bold>/health</Text>      - Codebase Health Check</Text>
+                    <Text><Text color="gray" bold>/jira</Text>        - Jira Integration</Text>
                     <Text><Text color="gray" bold>/help</Text>        - Show all commands</Text>
                 </Box>
             </Box>
 
             <Box marginTop={1} borderStyle="single" borderColor="green" paddingX={1}>
-                <Text color="green">💡 NEW: Just type naturally! "How does auth work?" or "Add an OKR"</Text>
+                <Text color="green">💡 Just type naturally! "How does auth work?" or "Create a PRD for dark mode"</Text>
             </Box>
         </Box>
     );

@@ -283,9 +283,11 @@ Examples:
 ║  └── "How is authentication handled?"                        ║
 ║  └── /investigate <query>                                    ║
 ║                                                              ║
-║  📝 PLAN                                                     ║
-║  └── "I want to add a forgot password feature"               ║
-║  └── /plan <feature>                                         ║
+║  📝 SMART DOCS (PRDs, Tickets, Specs)                        ║
+║  └── "Create a PRD for dark mode"                            ║
+║  └── /scribe prd <topic>                                     ║
+║  └── /scribe ticket <topic>                                  ║
+║  └── /scribe spec <topic>                                    ║
 ║                                                              ║
 ║  📖 READ                                                     ║
 ║  └── "Show me the UserService"                               ║

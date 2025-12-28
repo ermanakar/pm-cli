@@ -33,15 +33,17 @@ const fileSystemService = new FileSystemService(safetyService);
 const contextService = new ContextService(fileSystemService, configService);
 const mcpService = new MCPService(configService);
 const investigatorService = new InvestigatorService(fileSystemService, llmService, contextService);
-const scribeService = new ScribeService(fileSystemService, llmService);
 const investigatorAgent = new InvestigatorAgent(llmService, fileSystemService, contextService, mcpService);
 
-// NEW: Initialize enhanced brain services (memoryService needed by onboardingService)
+// Enhanced brain services (memoryService needed by multiple services)
 const memoryService = new MemoryService(process.cwd());
 const intentService = new IntentService(llmService);
 const healthService = new HealthService(fileSystemService, process.cwd());
 
-// OnboardingService now takes memoryService to populate strategic memory on /init
+// Smart Scribe - now with codebase investigation, memory context, and Jira/Confluence hooks
+const scribeService = new ScribeService(fileSystemService, llmService, memoryService, investigatorAgent, mcpService);
+
+// OnboardingService takes memoryService to populate strategic memory on /init
 const onboardingService = new OnboardingService(investigatorAgent, contextService, fileSystemService, llmService, memoryService);
 
 // Kicking off MCP connections in background
