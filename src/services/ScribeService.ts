@@ -101,6 +101,13 @@ export interface ScribeOptions {
     createJiraTickets?: boolean; // Create Jira tickets from ACs (future)
 }
 
+export interface ScribeResult {
+    filename: string;
+    content: string;
+    type: string;
+    topic: string;
+}
+
 export class ScribeService {
     constructor(
         private fileSystem: FileSystemService,
@@ -123,24 +130,29 @@ export class ScribeService {
         type: string,
         topic: string,
         providedContext?: string,
-        options: ScribeOptions = { investigate: true, includeMemory: true }
-    ): Promise<string> {
+        options: ScribeOptions = { investigate: true, includeMemory: true },
+        onProgress?: (step: string) => void
+    ): Promise<ScribeResult> {
 
         const contextParts: string[] = [];
 
         // 1. Investigate codebase for relevant context
         if (options.investigate && this.investigatorAgent) {
+            onProgress?.('🔍 Investigating codebase for relevant patterns...');
             const codebaseContext = await this.investigateForTopic(type, topic);
             if (codebaseContext) {
                 contextParts.push(`## Codebase Analysis\n${codebaseContext}`);
+                onProgress?.('✓ Found relevant code context');
             }
         }
 
         // 2. Get strategic memory context
         if (options.includeMemory && this.memoryService) {
+            onProgress?.('🎯 Loading strategic memory (OKRs, personas, decisions)...');
             const memoryContext = await this.getMemoryContext();
             if (memoryContext) {
                 contextParts.push(memoryContext);
+                onProgress?.('✓ Strategic context loaded');
             }
         }
 
@@ -152,22 +164,34 @@ export class ScribeService {
         const fullContext = contextParts.join('\n\n');
 
         // 4. Generate content using appropriate template
+        onProgress?.(`📝 Generating ${type.toUpperCase()} with AI...`);
         const content = await this.generateWithTemplate(type, topic, fullContext);
+        onProgress?.('✓ Document generated');
 
         // 5. Save to file
+        onProgress?.('💾 Saving to docs/...');
         const filename = `docs/${type.toLowerCase()}-${topic.replace(/\s+/g, '-').toLowerCase()}.md`;
         await this.fileSystem.writeFile(filename, content);
 
         // 6. Optionally sync to external systems (future)
         if (options.syncToConfluence && this.mcpService) {
+            onProgress?.('☁️ Syncing to Confluence...');
             await this.syncToConfluence(topic, content);
         }
 
         if (options.createJiraTickets && this.mcpService) {
+            onProgress?.('🎫 Creating Jira tickets...');
             await this.createJiraTicketsFromACs(topic, content);
         }
 
-        return filename;
+        onProgress?.('✅ Complete!');
+
+        return {
+            filename,
+            content,
+            type,
+            topic
+        };
     }
 
     /**

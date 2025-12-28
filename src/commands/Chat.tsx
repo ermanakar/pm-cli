@@ -153,11 +153,58 @@ export const Chat: React.FC = () => {
                     const type = args[0];
                     const topic = args.slice(1).join(' ');
                     if (!type || !topic) {
-                        systemResponse = 'Usage: /scribe <type> <topic>';
+                        systemResponse = `Usage: /scribe <type> <topic>
+
+📝 Document Types:
+  • prd    - Product Requirements Document
+  • ticket - Engineering Ticket
+  • spec   - Technical Specification
+
+Examples:
+  /scribe prd User Authentication
+  /scribe ticket Fix Login Bug
+  /scribe spec API Refactor`;
                     } else {
-                        setStreamingContent('Generating artifact...');
-                        const filename = await scribeService.generateArtifact(type, topic, 'Context from chat history...'); // TODO: Pass better context
-                        systemResponse = `Generated artifact: ${filename}`;
+                        // Show step-by-step progress
+                        let progressLog: string[] = [];
+                        const updateProgress = (step: string) => {
+                            progressLog.push(step);
+                            setStreamingContent(
+                                `📝 Generating ${type.toUpperCase()}: ${topic}\n\n` +
+                                progressLog.join('\n')
+                            );
+                        };
+
+                        updateProgress('🚀 Starting Smart Scribe...');
+
+                        const result = await scribeService.generateArtifact(
+                            type,
+                            topic,
+                            undefined, // No additional context
+                            { investigate: true, includeMemory: true },
+                            updateProgress
+                        );
+
+                        // Show completion summary with document preview option
+                        const docPreview = result.content.length > 500
+                            ? result.content.slice(0, 500) + '\n\n... (truncated)'
+                            : result.content;
+
+                        systemResponse = `
+╔══════════════════════════════════════════════════════════════╗
+║  ✅ DOCUMENT GENERATED                                       ║
+╠══════════════════════════════════════════════════════════════╣
+║  📄 File: ${result.filename.padEnd(47)}║
+║  📝 Type: ${result.type.toUpperCase().padEnd(47)}║
+║  📋 Topic: ${result.topic.slice(0, 45).padEnd(46)}║
+╚══════════════════════════════════════════════════════════════╝
+
+📖 Preview:
+─────────────────────────────────────────────────────────────────
+${docPreview}
+─────────────────────────────────────────────────────────────────
+
+💡 To view the full document: /read ${result.filename}`;
                     }
                 } else if (command === '/mcp') {
                     const subCmd = args[0];
