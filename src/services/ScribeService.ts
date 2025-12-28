@@ -109,6 +109,8 @@ export interface ScribeResult {
 }
 
 export class ScribeService {
+    private readonly MAX_FILENAME_LENGTH = 50; // Max chars for the topic portion
+
     constructor(
         private fileSystem: FileSystemService,
         private llm: LLMService,
@@ -116,6 +118,44 @@ export class ScribeService {
         private investigatorAgent?: InvestigatorAgent,
         private mcpService?: MCPService
     ) { }
+
+    /**
+     * Generate a safe, sanitized filename from a topic.
+     * - Removes special characters
+     * - Converts to lowercase kebab-case
+     * - Truncates to max length
+     * - Ensures it ends on a word boundary when possible
+     */
+    private generateSafeFilename(type: string, topic: string): string {
+        // 1. Remove special characters, keep only alphanumeric and spaces
+        let sanitized = topic
+            .replace(/[^\w\s-]/g, '') // Remove special chars except spaces and hyphens
+            .replace(/\s+/g, '-')      // Replace spaces with hyphens
+            .replace(/-+/g, '-')       // Collapse multiple hyphens
+            .toLowerCase()
+            .trim();
+
+        // 2. Truncate to max length, trying to end on a word boundary
+        if (sanitized.length > this.MAX_FILENAME_LENGTH) {
+            sanitized = sanitized.slice(0, this.MAX_FILENAME_LENGTH);
+
+            // Try to end on a hyphen (word boundary)
+            const lastHyphen = sanitized.lastIndexOf('-');
+            if (lastHyphen > this.MAX_FILENAME_LENGTH * 0.6) {
+                sanitized = sanitized.slice(0, lastHyphen);
+            }
+        }
+
+        // 3. Remove trailing hyphens
+        sanitized = sanitized.replace(/-+$/, '');
+
+        // 4. Fallback if empty
+        if (!sanitized) {
+            sanitized = 'untitled';
+        }
+
+        return `docs/${type.toLowerCase()}-${sanitized}.md`;
+    }
 
     /**
      * Generate a context-aware document artifact.
@@ -170,7 +210,7 @@ export class ScribeService {
 
         // 5. Save to file
         onProgress?.('💾 Saving to docs/...');
-        const filename = `docs/${type.toLowerCase()}-${topic.replace(/\s+/g, '-').toLowerCase()}.md`;
+        const filename = this.generateSafeFilename(type, topic);
         await this.fileSystem.writeFile(filename, content);
 
         // 6. Optionally sync to external systems (future)
